@@ -1,6 +1,6 @@
-# BertGCN
-This repo contains code for [BertGCN: Transductive Text Classification by Combining GCN and BERT](https://arxiv.org/abs/2105.05727).
+# BertGCN - Modern Implementation
 
+This is a modernized implementation of BertGCN compatible with Python 3.13+ and supporting the `jcblaise/roberta-tagalog-base` model.
 
 ## Introduction
 
@@ -20,11 +20,13 @@ In this work, we propose BertGCN, a model that combines large scale pretraining 
 
 ## Dependencies
 
-Create environment and install required packages for BertGCN using conda:
+```bash
+# Install dependencies
+!pip install -r requirements.txt
 
-`conda create --name BertGCN --file requirements.txt -c default -c pytorch -c dglteam -c huggingface`
-
-If the NVIDIA driver version does not support CUDA 10.1 you may edit requirements.txt to use older cudatooklit and the corresponding [dgl](https://www.dgl.ai/pages/start.html) instead.
+# For DGL with CUDA 11.8 (Colab default)
+!pip install dgl-cu118 -f https://data.dgl.ai/wheels/repo.html
+```
 
 ## Usage
 

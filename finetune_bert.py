@@ -12,7 +12,8 @@ from datetime import datetime
 from sklearn.metrics import accuracy_score
 import argparse, shutil, logging
 from torch.optim import lr_scheduler
-from model import BertClassifier
+from models import BertClassifier
+import sys
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--max_length', type=int, default=128, help='the input length for bert')
@@ -21,7 +22,7 @@ parser.add_argument('--nb_epochs', type=int, default=60)
 parser.add_argument('--bert_lr', type=float, default=1e-4)
 parser.add_argument('--dataset', default='20ng', choices=['20ng', 'R8', 'R52', 'ohsumed', 'mr'])
 parser.add_argument('--bert_init', type=str, default='roberta-base',
-                    choices=['roberta-base', 'roberta-large', 'bert-base-uncased', 'bert-large-uncased'])
+                    choices=['roberta-base', 'roberta-large', 'bert-base-uncased', 'bert-large-uncased', 'jcblaise/roberta-tagalog-base'])
 parser.add_argument('--checkpoint_dir', default=None, help='checkpoint directory, [bert_init]_[dataset] if not specified')
 
 args = parser.parse_args()
@@ -34,7 +35,7 @@ dataset = args.dataset
 bert_init = args.bert_init
 checkpoint_dir = args.checkpoint_dir
 if checkpoint_dir is None:
-    ckpt_dir = './checkpoint/{}_{}'.format(bert_init, dataset)
+    ckpt_dir = './checkpoint/{}_{}'.format(bert_init.replace('/', '_'), dataset)
 else:
     ckpt_dir = checkpoint_dir
 
@@ -52,8 +53,9 @@ logger.addHandler(sh)
 logger.addHandler(fh)
 logger.setLevel(logging.INFO)
 
-cpu = th.device('cpu')
-gpu = th.device('cuda:0')
+# Device setup - more robust
+device = th.device('cuda' if th.cuda.is_available() else 'cpu')
+logger.info(f'Using device: {device}')
 
 logger.info('arguments:')
 logger.info(str(args))
@@ -61,11 +63,6 @@ logger.info('checkpoints will be saved in {}'.format(ckpt_dir))
 
 # Data Preprocess
 adj, features, y_train, y_val, y_test, train_mask, val_mask, test_mask, train_size, test_size = load_corpus(dataset)
-'''
-y_train, y_val, y_test: n*c matrices 
-train_mask, val_mask, test_mask: n-d bool array
-train_size, test_size: unused
-'''
 
 # compute number of real train/val/test/word nodes and number of classes
 nb_node = adj.shape[0]
@@ -77,7 +74,7 @@ nb_class = y_train.shape[1]
 model = BertClassifier(pretrained_model=bert_init, nb_class=nb_class)
 
 # transform one-hot label to class ID for pytorch computation
-y = th.LongTensor((y_train + y_val +y_test).argmax(axis=1))
+y = th.LongTensor((y_train + y_val + y_test).argmax(axis=1))
 label = {}
 label['train'], label['val'], label['test'] = y[:nb_train], y[nb_train:nb_train+nb_val], y[-nb_test:]
 
@@ -116,9 +113,8 @@ scheduler = lr_scheduler.MultiStepLR(optimizer, milestones=[30], gamma=0.1)
 def train_step(engine, batch):
     global model, optimizer
     model.train()
-    model = model.to(gpu)
-    optimizer.zero_grad()
-    (input_ids, attention_mask, label) = [x.to(gpu) for x in batch]
+    model = model.to(device)
+    (input_ids, attention_mask, label) = [x.to(device) for x in batch]
     optimizer.zero_grad()
     y_pred = model(input_ids, attention_mask)
     y_true = label.type(th.long)
@@ -140,9 +136,8 @@ def test_step(engine, batch):
     global model
     with th.no_grad():
         model.eval()
-        model = model.to(gpu)
-        (input_ids, attention_mask, label) = [x.to(gpu) for x in batch]
-        optimizer.zero_grad()
+        model = model.to(device)
+        (input_ids, attention_mask, label) = [x.to(device) for x in batch]
         y_pred = model(input_ids, attention_mask)
         y_true = label
         return y_pred, y_true

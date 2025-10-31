@@ -15,7 +15,7 @@ import sys
 import logging
 from datetime import datetime
 from torch.optim import lr_scheduler
-from model import BertGCN, BertGAT
+from models import BertGCN, BertGAT
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--max_length', type=int, default=128, help='the input length for bert')
@@ -23,7 +23,7 @@ parser.add_argument('--batch_size', type=int, default=64)
 parser.add_argument('-m', '--m', type=float, default=0.7, help='the factor balancing BERT and GCN prediction')
 parser.add_argument('--nb_epochs', type=int, default=50)
 parser.add_argument('--bert_init', type=str, default='roberta-base',
-                    choices=['roberta-base', 'roberta-large', 'bert-base-uncased', 'bert-large-uncased'])
+                    choices=['roberta-base', 'roberta-large', 'bert-base-uncased', 'bert-large-uncased', 'jcblaise/roberta-tagalog-base'])
 parser.add_argument('--pretrained_bert_ckpt', default=None)
 parser.add_argument('--dataset', default='20ng', choices=['20ng', 'R8', 'R52', 'ohsumed', 'mr'])
 parser.add_argument('--checkpoint_dir', default=None, help='checkpoint directory, [bert_init]_[gcn_model]_[dataset] if not specified')
@@ -53,7 +53,7 @@ gcn_lr = args.gcn_lr
 bert_lr = args.bert_lr
 
 if checkpoint_dir is None:
-    ckpt_dir = './checkpoint/{}_{}_{}'.format(bert_init, gcn_model, dataset)
+    ckpt_dir = './checkpoint/{}_{}_{}'.format(bert_init.replace('/', '_'), gcn_model, dataset)
 else:
     ckpt_dir = checkpoint_dir
 os.makedirs(ckpt_dir, exist_ok=True)
@@ -70,8 +70,9 @@ logger.addHandler(sh)
 logger.addHandler(fh)
 logger.setLevel(logging.INFO)
 
-cpu = th.device('cpu')
-gpu = th.device('cuda:0')
+# Device setup - more robust
+device = th.device('cuda' if th.cuda.is_available() else 'cpu')
+logger.info(f'Using device: {device}')
 
 logger.info('arguments:')
 logger.info(str(args))
@@ -81,11 +82,6 @@ logger.info('checkpoints will be saved in {}'.format(ckpt_dir))
 
 # Data Preprocess
 adj, features, y_train, y_val, y_test, train_mask, val_mask, test_mask, train_size, test_size = load_corpus(dataset)
-'''
-adj: n*n sparse adjacency matrix
-y_train, y_val, y_test: n*c matrices 
-train_mask, val_mask, test_mask: n-d bool array
-'''
 
 # compute number of real train/val/test/word nodes and number of classes
 nb_node = features.shape[0]
@@ -103,7 +99,7 @@ else:
 
 
 if pretrained_bert_ckpt is not None:
-    ckpt = th.load(pretrained_bert_ckpt, map_location=gpu)
+    ckpt = th.load(pretrained_bert_ckpt, map_location=device)
     model.bert_model.load_state_dict(ckpt['bert_model'])
     model.classifier.load_state_dict(ckpt['classifier'])
 
@@ -117,7 +113,6 @@ with open(corpse_file, 'r') as f:
 
 def encode_input(text, tokenizer):
     input = tokenizer(text, max_length=max_length, truncation=True, padding='max_length', return_tensors='pt')
-#     print(input.keys())
     return input.input_ids, input.attention_mask
 
 
@@ -165,15 +160,17 @@ def update_feature():
         batch_size=1024
     )
     with th.no_grad():
-        model = model.to(gpu)
+        model = model.to(device)
         model.eval()
         cls_list = []
         for i, batch in enumerate(dataloader):
-            input_ids, attention_mask = [x.to(gpu) for x in batch]
-            output = model.bert_model(input_ids=input_ids, attention_mask=attention_mask)[0][:, 0]
+            input_ids, attention_mask = [x.to(device) for x in batch]
+            # Modern transformers API
+            outputs = model.bert_model(input_ids=input_ids, attention_mask=attention_mask)
+            output = outputs.last_hidden_state[:, 0]  # Use [CLS] token
             cls_list.append(output.cpu())
         cls_feat = th.cat(cls_list, axis=0)
-    g = g.to(cpu)
+    g = g.to('cpu')
     g.ndata['cls_feats'][doc_mask] = cls_feat
     return g
 
@@ -190,10 +187,10 @@ scheduler = lr_scheduler.MultiStepLR(optimizer, milestones=[30], gamma=0.1)
 def train_step(engine, batch):
     global model, g, optimizer
     model.train()
-    model = model.to(gpu)
-    g = g.to(gpu)
+    model = model.to(device)
+    g = g.to(device)
     optimizer.zero_grad()
-    (idx, ) = [x.to(gpu) for x in batch]
+    (idx, ) = [x.to(device) for x in batch]
     optimizer.zero_grad()
     train_mask = g.ndata['train'][idx].type(th.BoolTensor)
     y_pred = model(g, idx)[train_mask]
@@ -227,9 +224,9 @@ def test_step(engine, batch):
     global model, g
     with th.no_grad():
         model.eval()
-        model = model.to(gpu)
-        g = g.to(gpu)
-        (idx, ) = [x.to(gpu) for x in batch]
+        model = model.to(device)
+        g = g.to(device)
+        (idx, ) = [x.to(device) for x in batch]
         y_pred = model(g, idx)
         y_true = g.ndata['label'][idx]
         return y_pred, y_true
