@@ -23,7 +23,7 @@ parser.add_argument('--batch_size', type=int, default=64)
 parser.add_argument('-m', '--m', type=float, default=0.7, help='the factor balancing BERT and GCN prediction')
 parser.add_argument('--nb_epochs', type=int, default=50)
 parser.add_argument('--bert_init', type=str, default='roberta-base',
-                    choices=['roberta-base', 'roberta-large', 'bert-base-uncased', 'bert-large-uncased'])
+                    choices=['roberta-base', 'roberta-large', 'bert-base-uncased', 'bert-large-uncased', 'jcblaise/roberta-tagalog-base'])
 parser.add_argument('--pretrained_bert_ckpt', default=None)
 parser.add_argument('--dataset', default='20ng', choices=['20ng', 'R8', 'R52', 'ohsumed', 'mr', 'isarcasm', 'semeval3a'])
 parser.add_argument('--checkpoint_dir', default=None, help='checkpoint directory, [bert_init]_[gcn_model]_[dataset] if not specified')
@@ -38,6 +38,7 @@ parser.add_argument('--seed', type=int, default=42, help='random seed for reprod
 parser.add_argument('--device', type=str, default='cuda', choices=['cuda', 'cpu'], help='device to use for training')
 parser.add_argument('--patience', type=int, default=10, help='early stopping patience')
 parser.add_argument('--use_custom_test', action='store_true', help='use custom test set for semeval3a dataset')
+parser.add_argument('--encoding', type=str, default='utf-8', help='file encoding for corpus files')
 args = parser.parse_args()
 max_length = args.max_length
 batch_size = args.batch_size
@@ -58,6 +59,7 @@ seed = args.seed
 device_type = args.device
 patience = args.patience
 use_custom_test = args.use_custom_test
+file_encoding = args.encoding
 
 # Set random seeds for reproducibility
 import random
@@ -103,6 +105,7 @@ logger.info('arguments:')
 logger.info(str(args))
 logger.info('Random seed: {}'.format(seed))
 logger.info('Device: {}'.format(device_type))
+logger.info('File encoding: {}'.format(file_encoding))
 logger.info('checkpoints will be saved in {}'.format(ckpt_dir))
 # Model
 
@@ -138,10 +141,40 @@ if pretrained_bert_ckpt is not None:
 
 # load documents and compute input encodings
 corpse_file = './data/corpus/' + dataset +'_shuffle.txt'
-with open(corpse_file, 'r') as f:
-    text = f.read()
-    text = text.replace('\\', '')
-    text = text.split('\n')
+try:
+    # Try with specified encoding first
+    with open(corpse_file, 'r', encoding=file_encoding) as f:
+        text = f.read()
+        text = text.replace('\\', '')
+        text = text.split('\n')
+except UnicodeDecodeError:
+    # Fall back to different encodings if specified encoding fails
+    logger.warning(f"Failed to read with {file_encoding} encoding. Trying fallback encodings...")
+    encodings_to_try = ['utf-8', 'latin-1', 'cp1252', 'iso-8859-1']
+    if file_encoding in encodings_to_try:
+        encodings_to_try.remove(file_encoding)
+    
+    success = False
+    for enc in encodings_to_try:
+        try:
+            with open(corpse_file, 'r', encoding=enc) as f:
+                text = f.read()
+                text = text.replace('\\', '')
+                text = text.split('\n')
+            logger.info(f"Successfully read file with {enc} encoding")
+            success = True
+            break
+        except UnicodeDecodeError:
+            continue
+    
+    if not success:
+        # Last resort: use binary mode and ignore errors
+        logger.warning("All encodings failed. Using binary mode with error ignoring...")
+        with open(corpse_file, 'rb') as f:
+            raw_data = f.read()
+            text = raw_data.decode('utf-8', errors='ignore')
+            text = text.replace('\\', '')
+            text = text.split('\n')
 
 def encode_input(text, tokenizer):
     input = tokenizer(text, max_length=max_length, truncation=True, padding='max_length', return_tensors='pt')
@@ -460,31 +493,16 @@ if custom_test_loader is not None and custom_test_data is not None:
                                             target_names=class_names, 
                                             digits=4))
     logger.info("="*80)
-    
-    # Append to results file
-    with open(results_file, 'a') as f:
-        f.write("\n\n")
-        f.write("CUSTOM TEST SET RESULTS\n")
-        f.write("="*80 + "\n")
-        f.write("Custom Test Accuracy: {:.4f}\n".format(custom_accuracy))
-        f.write("Custom Test F1 Macro: {:.4f}\n".format(custom_f1_macro))
-        f.write("\n")
-        if dataset == 'semeval3a':
-            f.write("F1 Not Ironic: {:.4f}\n".format(custom_f1_per_class[0]))
-            f.write("F1 Ironic: {:.4f}\n".format(custom_f1_per_class[1]))
-        f.write("\n")
-        f.write(classification_report(custom_labels, custom_preds, 
-                                     target_names=class_names, 
-                                     digits=4))
 
 # Save final results to file
 results_file = os.path.join(ckpt_dir, 'final_results.txt')
-with open(results_file, 'w') as f:
+with open(results_file, 'w', encoding='utf-8') as f:
     f.write("FINAL TEST RESULTS\n")
     f.write("="*80 + "\n")
     f.write("Dataset: {}\n".format(dataset))
     f.write("Seed: {}\n".format(seed))
     f.write("Device: {}\n".format(device_type))
+    f.write("File encoding: {}\n".format(file_encoding))
     f.write("\n")
     f.write("Test Accuracy: {:.4f}\n".format(test_accuracy))
     f.write("Test F1 Macro: {:.4f}\n".format(test_f1_macro))

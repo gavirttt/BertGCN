@@ -46,7 +46,8 @@ doc_name_list = []
 doc_train_list = []
 doc_test_list = []
 
-f = open('data/' + dataset + '.txt', 'r')
+# Fix: Add encoding='utf-8' to file reads
+f = open('data/' + dataset + '.txt', 'r', encoding='utf-8')
 lines = f.readlines()
 for line in lines:
     doc_name_list.append(line.strip())
@@ -60,7 +61,8 @@ f.close()
 # print(doc_test_list)
 
 doc_content_list = []
-f = open('data/corpus/' + dataset + '.clean.txt', 'r')
+# Fix: Add encoding='utf-8' to file reads
+f = open('data/corpus/' + dataset + '.clean.txt', 'r', encoding='utf-8')
 lines = f.readlines()
 for line in lines:
     doc_content_list.append(line.strip())
@@ -78,7 +80,8 @@ random.shuffle(train_ids)
 #train_ids = train_ids[:int(0.2 * len(train_ids))]
 
 train_ids_str = '\n'.join(str(index) for index in train_ids)
-f = open('data/' + dataset + '.train.index', 'w')
+# Fix: Add encoding='utf-8' to file writes (good practice)
+f = open('data/' + dataset + '.train.index', 'w', encoding='utf-8')
 f.write(train_ids_str)
 f.close()
 
@@ -90,7 +93,8 @@ print(f"Test samples: {len(test_ids)}")
 random.shuffle(test_ids)
 
 test_ids_str = '\n'.join(str(index) for index in test_ids)
-f = open('data/' + dataset + '.test.index', 'w')
+# Fix: Add encoding='utf-8' to file writes
+f = open('data/' + dataset + '.test.index', 'w', encoding='utf-8')
 f.write(test_ids_str)
 f.close()
 
@@ -106,11 +110,13 @@ for id in tqdm(ids, desc="Processing documents"):
 shuffle_doc_name_str = '\n'.join(shuffle_doc_name_list)
 shuffle_doc_words_str = '\n'.join(shuffle_doc_words_list)
 
-f = open('data/' + dataset + '_shuffle.txt', 'w')
+# Fix: Add encoding='utf-8' to file writes
+f = open('data/' + dataset + '_shuffle.txt', 'w', encoding='utf-8')
 f.write(shuffle_doc_name_str)
 f.close()
 
-f = open('data/corpus/' + dataset + '_shuffle.txt', 'w')
+# Fix: Add encoding='utf-8' to file writes
+f = open('data/corpus/' + dataset + '_shuffle.txt', 'w', encoding='utf-8')
 f.write(shuffle_doc_words_str)
 f.close()
 
@@ -158,7 +164,8 @@ for i in range(vocab_size):
 
 vocab_str = '\n'.join(vocab)
 
-f = open('data/corpus/' + dataset + '_vocab.txt', 'w')
+# Fix: Add encoding='utf-8' to file writes
+f = open('data/corpus/' + dataset + '_vocab.txt', 'w', encoding='utf-8')
 f.write(vocab_str)
 f.close()
 
@@ -227,7 +234,8 @@ for doc_meta in shuffle_doc_name_list:
 label_list = list(label_set)
 
 label_list_str = '\n'.join(label_list)
-f = open('data/corpus/' + dataset + '_labels.txt', 'w')
+# Fix: Add encoding='utf-8' to file writes
+f = open('data/corpus/' + dataset + '_labels.txt', 'w', encoding='utf-8')
 f.write(label_list_str)
 f.close()
 
@@ -241,7 +249,8 @@ real_train_size = train_size - val_size  # - int(0.5 * train_size)
 real_train_doc_names = shuffle_doc_name_list[:real_train_size]
 real_train_doc_names_str = '\n'.join(real_train_doc_names)
 
-f = open('data/' + dataset + '.real_train.name', 'w')
+# Fix: Add encoding='utf-8' to file writes
+f = open('data/' + dataset + '.real_train.name', 'w', encoding='utf-8')
 f.write(real_train_doc_names_str)
 f.close()
 
