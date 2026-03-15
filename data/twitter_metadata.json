@@ -1,0 +1,15 @@
+{
+  "dataset_name": "twitter",
+  "total_documents": 73799,
+  "train_size": 3571,
+  "val_size": 893,
+  "test_size": 69335,
+  "sentiment_labels": [
+    0,
+    1,
+    2
+  ],
+  "num_conversations": 52828,
+  "seed": 42,
+  "note": "Train/Val from labeled data only. Test is unlabeled data."
+}
