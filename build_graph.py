@@ -17,26 +17,37 @@ import argparse
 parser = argparse.ArgumentParser()
 parser.add_argument('dataset', type=str, help='Dataset name')
 parser.add_argument('--seed', type=int, default=42, help='Random seed for reproducibility')
+parser.add_argument('--conversation_weight', type=float, default=1.0, 
+                   help='Weight for conversation edges (only for Twitter datasets)')
 args = parser.parse_args()
 
 dataset = args.dataset
 seed = args.seed
+conversation_weight = args.conversation_weight
 
 # Set random seeds for reproducibility
 random.seed(seed)
 np.random.seed(seed)
 print(f"Using random seed: {seed}")
-
-datasets = ['20ng', 'R8', 'R52', 'ohsumed', 'mr', 'isarcasm', 'semeval3a']
-
-if dataset not in datasets:
-	sys.exit(f"Wrong dataset name. Supported datasets: {datasets}")
-
-# Read Word Vectors
-# word_vector_file = 'data/glove.6B/glove.6B.300d.txt'
-# word_vector_file = 'data/corpus/' + dataset + '_word_vectors.txt'
-#_, embd, word_vector_map = loadWord2Vec(word_vector_file)
-# word_embeddings_dim = len(embd[0])
+has_conversations = dataset == 'twitter'
+if has_conversations:
+    print(f"✓ Twitter dataset detected: {dataset}")
+    print(f"  Conversation edge weight: {conversation_weight}")
+    
+    # Load conversation mapping if it exists
+    conversation_map_path = f'data/{dataset}_conversations.pkl'
+    if os.path.exists(conversation_map_path):
+        with open(conversation_map_path, 'rb') as f:
+            conversation_map = pkl.load(f)
+        print(f"  Loaded {len(conversation_map)} conversations")
+    else:
+        print(f"  ⚠ No conversation mapping found at {conversation_map_path}")
+        print(f"  Continuing without conversation edges")
+        has_conversations = False
+        conversation_map = {}
+else:
+    print(f"Standard dataset: {dataset} (no conversation edges)")
+    conversation_map = {}
 
 word_embeddings_dim = 300
 word_vector_map = {}
@@ -528,6 +539,62 @@ for i in tqdm(range(len(shuffle_doc_words_list)), desc="Graph edges"):
                   word_doc_freq[vocab[j]])
         weight.append(freq * idf)
         doc_word_set.add(word)
+
+# Add conversation edges for Twitter datasets
+if has_conversations and conversation_map:
+    print("\n" + "="*60)
+    print("Adding conversation-based edges for Twitter dataset")
+    print("="*60)
+    
+    # Create mapping from original doc IDs to shuffled positions
+    original_to_shuffled = {}
+    for shuffled_pos, orig_id in enumerate(ids):
+        original_to_shuffled[orig_id] = shuffled_pos
+    
+    conversation_edges_added = 0
+    
+    for conv_id, doc_ids in tqdm(conversation_map.items(), desc="Conversation edges"):
+        if len(doc_ids) < 2:
+            continue
+        
+        # Get shuffled positions for docs in this conversation
+        shuffled_positions = []
+        for orig_id in doc_ids:
+            if orig_id in original_to_shuffled:
+                shuffled_pos = original_to_shuffled[orig_id]
+                shuffled_positions.append(shuffled_pos)
+        
+        # Connect all pairs in the conversation
+        for i in range(len(shuffled_positions)):
+            for j in range(i + 1, len(shuffled_positions)):
+                pos_i = shuffled_positions[i]
+                pos_j = shuffled_positions[j]
+                
+                # Adjust positions based on train/test split
+                if pos_i < train_size:
+                    node_i = pos_i
+                else:
+                    node_i = pos_i + vocab_size
+                
+                if pos_j < train_size:
+                    node_j = pos_j
+                else:
+                    node_j = pos_j + vocab_size
+                
+                # Add bidirectional edges
+                row.append(node_i)
+                col.append(node_j)
+                weight.append(conversation_weight)
+                
+                row.append(node_j)
+                col.append(node_i)
+                weight.append(conversation_weight)
+                
+                conversation_edges_added += 2
+    
+    print(f"✓ Added {conversation_edges_added} conversation edges")
+    if len(conversation_map) > 0:
+        print(f"  Average edges per conversation: {conversation_edges_added / len(conversation_map):.2f}")
 
 node_size = train_size + vocab_size + test_size
 print("Creating adjacency matrix...")

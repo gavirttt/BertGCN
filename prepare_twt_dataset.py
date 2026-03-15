@@ -8,7 +8,8 @@ import pandas as pd
 import numpy as np
 from tqdm import tqdm
 import re, html, emoji
-
+import pickle
+import json
 
 def clean_text(text):
     """Clean tweet text"""
@@ -64,8 +65,6 @@ def prepare_twitter_dataset(
     csv_path,
     output_dir='data',
     dataset_name='twitter',
-    train_ratio=0.8,
-    val_ratio=0.2,
     unlabeled_csv_path=None,
     seed=42
 ):
@@ -73,18 +72,11 @@ def prepare_twitter_dataset(
     Prepare Twitter dataset for BertGCN
     
     Args:
-        csv_path: Path to labeled tweets CSV
+        csv_path: Path to labeled tweets CSV (ALL will be used as training data)
         output_dir: Output directory
         dataset_name: Name for the dataset
-        train_ratio: Ratio of labeled data for training (default: 0.8)
-        val_ratio: Ratio of labeled data for validation (default: 0.2)
-        unlabeled_csv_path: Optional path to unlabeled tweets CSV (will be used as test set)
-        seed: Random seed
-    
-    Note:
-        - Train/Val splits come ONLY from labeled data
-        - Test set is ONLY unlabeled data (if provided)
-        - If no unlabeled data, a warning is shown
+        unlabeled_csv_path: Optional path to unlabeled tweets CSV (becomes test set)
+        seed: Random seed (for reproducibility)
     """
     
     print(f"Loading labeled dataset from {csv_path}...")
@@ -120,39 +112,29 @@ def prepare_twitter_dataset(
     # Split labeled data into train/val ONLY
     df_labeled = df_labeled.sample(frac=1, random_state=seed).reset_index(drop=True)
     
-    n_labeled = len(df_labeled)
-    n_train = int(n_labeled * train_ratio)
+    # ALL labeled data becomes 'train' in the .txt file
+    df_labeled['split'] = 'train'
     
-    df_train = df_labeled[:n_train].copy()
-    df_val = df_labeled[n_train:].copy()
+    dfs_to_combine = [df_labeled]
     
-    print(f"\nSplit labeled data:")
-    print(f"  Train: {len(df_train)} ({train_ratio*100:.0f}% of labeled)")
-    print(f"  Val: {len(df_val)} ({val_ratio*100:.0f}% of labeled)")
-    
-    # Combine all data
-    df_train['split'] = 'train'
-    df_val['split'] = 'val'
-    
-    dfs_to_combine = [df_train, df_val]
-    
-    # Unlabeled data becomes the test set
     if df_unlabeled is not None:
         df_unlabeled['split'] = 'test'
         df_unlabeled['sentiment'] = 'unlabeled'  # Placeholder
         dfs_to_combine.append(df_unlabeled)
-        print(f"  Test (unlabeled): {len(df_unlabeled)}")
     
     df_all = pd.concat(dfs_to_combine, ignore_index=True)
     
     print(f"\nTotal documents: {len(df_all)}")
+    print(f"  Train (labeled): {len(df_labeled)}")
+    print(f"  Test (unlabeled): {len(df_unlabeled) if df_unlabeled is not None else 0}")
+    print(f"\nNOTE: Graph builder will create 90/10 validation split from training data")
     
     # Create output directories
     os.makedirs(output_dir, exist_ok=True)
     os.makedirs(f'{output_dir}/corpus', exist_ok=True)
     
     # Get unique sentiment labels (excluding 'unlabeled')
-    sentiment_labels = df_labeled['sentiment'].unique().tolist()
+    sentiment_labels = [l for l in df_labeled['sentiment'].unique() if l != 'unlabeled']
     sentiment_labels.sort()
     
     print(f"\nSentiment labels: {sentiment_labels}")
@@ -192,42 +174,33 @@ def prepare_twitter_dataset(
                 conversation_map[conv_id] = []
             conversation_map[conv_id].append(idx)
     
-    # Save conversation mapping
-    import pickle
     with open(f'{output_dir}/{dataset_name}_conversations.pkl', 'wb') as f:
         pickle.dump(conversation_map, f)
     
     print(f"  Total conversations: {len(conversation_map)}")
     print(f"  Conversations with multiple tweets: {sum(1 for docs in conversation_map.values() if len(docs) > 1)}")
     
-    # Create metadata file with statistics
-    metadata = {
-        'dataset_name': dataset_name,
-        'total_documents': len(df_all),
-        'train_size': len(df_train),
-        'val_size': len(df_val),
-        'test_size': len(df_unlabeled) if df_unlabeled is not None else 0,
-        'sentiment_labels': sentiment_labels,
-        'num_conversations': len(conversation_map),
-        'seed': seed,
-        'note': 'Train/Val from labeled data only. Test is unlabeled data.'
-    }
+    # # Create metadata file with statistics
+    # metadata = {
+    #     'dataset_name': dataset_name,
+    #     'total_documents': int(len(df_all)),
+    #     'train_size': int(len(df_labeled)),
+    #     'test_size': int(len(df_unlabeled) if df_unlabeled is not None else 0),
+    #     'sentiment_labels': sentiment_labels,
+    #     'num_conversations': int(len(conversation_map)),
+    #     'seed': int(seed),
+    #     'note': 'Graph builder creates 90/10 validation split from training data internally'
+    # }
     
-    import json
-    with open(f'{output_dir}/{dataset_name}_metadata.json', 'w') as f:
-        json.dump(metadata, f, indent=2)
+    # with open(f'{output_dir}/{dataset_name}_metadata.json', 'w') as f:
+    #     json.dump(metadata, f, indent=2)
     
     print(f"\n✓ Dataset preparation complete!")
-    print(f"  Files saved to: {output_dir}/")
-    print(f"\nDataset structure:")
-    print(f"  Train: {len(df_train)} labeled tweets")
-    print(f"  Val: {len(df_val)} labeled tweets")
-    print(f"  Test: {len(df_unlabeled) if df_unlabeled is not None else 0} unlabeled tweets")
     print(f"\nNext steps:")
-    print(f"  1. Build graph: python3 build_graph_twitter.py {dataset_name} --seed {seed}")
+    print(f"  1. Build graph: python3 build_graph.py {dataset_name} --seed {seed} --conversation_weight 1.0")
     print(f"  2. Train model: python3 train_bert_gcn.py --dataset {dataset_name} --seed {seed}")
     
-    return metadata
+    # return metadata
 
 
 if __name__ == '__main__':
@@ -240,25 +213,15 @@ if __name__ == '__main__':
                        help='Output directory (default: data)')
     parser.add_argument('--dataset_name', type=str, default='twitter',
                        help='Dataset name (default: twitter)')
-    parser.add_argument('--train_ratio', type=float, default=0.8,
-                       help='Train ratio from labeled data (default: 0.8)')
-    parser.add_argument('--val_ratio', type=float, default=0.2,
-                       help='Validation ratio from labeled data (default: 0.2)')
     parser.add_argument('--seed', type=int, default=42,
                        help='Random seed (default: 42)')
     
     args = parser.parse_args()
     
-    # Validate ratios
-    if abs(args.train_ratio + args.val_ratio - 1.0) > 0.01:
-        raise ValueError("Train and val ratios must sum to 1.0")
-    
     prepare_twitter_dataset(
         csv_path=args.csv,
         output_dir=args.output_dir,
         dataset_name=args.dataset_name,
-        train_ratio=args.train_ratio,
-        val_ratio=args.val_ratio,
         unlabeled_csv_path=args.unlabeled_csv,
         seed=args.seed
     )
