@@ -12,7 +12,7 @@ nohup.out
 checkpoints/*
 checkpoint/*
 ,/*
-
+annotator_stats/*
 *.ipynb
 bert_gcn
 bert_gcn_ind
