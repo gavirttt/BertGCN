@@ -19,15 +19,9 @@ def clean_text(text):
     # Decode HTML entities
     text = html.unescape(str(text))
 
-    # Extract and replace emojis with single tokens
-    emoji_list = []
+    # Convert emojis to plain English word tokens
     def replace_emoji_handler(emoji_char, data_copy):
-        emoji_name = emoji.demojize(emoji_char).replace(':', '').replace('_', ' ')
-        token = f"[EMOJI_{emoji_name}]"
-        emoji_list.append(token)
-        return token
-    
-    # Find all emojis and replace with single tokens
+        return ' ' + emoji.demojize(emoji_char).replace(':', '').replace('_', ' ') + ' '
     text = emoji.replace_emoji(text, replace=replace_emoji_handler)
 
     # Remove URLs
@@ -35,26 +29,30 @@ def clean_text(text):
 
     # Normalize quotation marks and apostrophes
     text = text.replace("'", "'").replace("'", "'").replace(""", '"').replace(""", '"')
-    
-    # Remove unwanted symbols but KEEP @ and #
-    text = re.sub(r"[^a-zA-Z0-9\s\[\]'\".,!?@#-]", " ", text)
-    
+
+    # Preserve acronyms: temporarily replace periods between single letters with a placeholder
+    # e.g. U.S.A → U<DOT>S<DOT>A
+    text = re.sub(r'(?<=[A-Za-z])\.(?=[A-Za-z]\.)', '<DOT>', text)  # middle dots in acronym
+    text = re.sub(r'(?<=[A-Za-z]{1})\.(?=[A-Za-z]{1}\b)', '<DOT>', text)  # trailing dot in acronym
+
     # Collapse repeated punctuation
-    text = re.sub(r"([!?.,])\1+", r"\1", text)
+    text = re.sub(r'([!?.,])\1+', r'\1', text)
+
+    # Pad punctuation with spaces so they detach from words
+    text = re.sub(r'([.,!?;:"\(\)\[\]{}])', r' \1 ', text)
+
+    # Remove acronym dots
+    text = text.replace('<DOT>', '')
 
     # Normalize mentions and hashtags
-    text = re.sub(r"@{2,}", "@", text)
-    text = re.sub(r"@\s+", "@", text)
-    text = re.sub(r"#{2,}", "#", text)
-    text = re.sub(r"#\s+", "#", text)
-
-    # Fix spacing around quotes
-    text = re.sub(r'\s*"\s*', '"', text)
-    text = re.sub(r"\s*'\s*", "'", text)
+    text = re.sub(r'@{2,}', '@', text)
+    text = re.sub(r'@\s+', '@', text)
+    text = re.sub(r'#{2,}', '#', text)
+    text = re.sub(r'#\s+', '#', text)
 
     # Remove non-ASCII characters
-    text = text.encode("ascii", errors="ignore").decode()
-    
+    text = text.encode('ascii', errors='ignore').decode()
+
     # Remove extra whitespace
     text = ' '.join(text.split())
     
