@@ -146,6 +146,7 @@ nb_node = features.shape[0]
 nb_train, nb_val, nb_test = train_mask.sum(), val_mask.sum(), test_mask.sum()
 nb_word = nb_node - nb_train - nb_val - nb_test
 nb_class = y_train.shape[1]
+orig_nb_test = int(nb_test)
 
 # ── K-fold mask override ─────────────────────────────────────────────────────────
 # Replace train/val/test masks with the fold indices supplied by the orchestrator.
@@ -178,11 +179,16 @@ if kfold_mode:
     # full document pool without an explicit test split).  We therefore treat
     # the fold indices as direct node indices into the graph.
 
+    labels = y_train + y_val + y_test   # full label matrix from load_corpus
+
     # 90/10 val split taken from the fold's training set
-    random.shuffle(fold_train_idx)
-    val_count       = int(0.1 * len(fold_train_idx))
-    real_train_idx  = fold_train_idx[val_count:]   # 90% → actual train nodes
-    fold_val_idx    = fold_train_idx[:val_count]   # 10% → validation nodes
+    from sklearn.model_selection import StratifiedShuffleSplit
+
+    fold_train_labels = [labels[i].argmax() for i in fold_train_idx]
+    sss = StratifiedShuffleSplit(n_splits=1, test_size=0.1, random_state=seed)
+    tr_sub, val_sub = next(sss.split(fold_train_idx, fold_train_labels))
+    real_train_idx = [fold_train_idx[i] for i in tr_sub]
+    fold_val_idx   = [fold_train_idx[i] for i in val_sub]
 
     fold_train_size = len(fold_train_idx)
     fold_val_size   = len(fold_val_idx)
@@ -192,8 +198,6 @@ if kfold_mode:
     train_mask = sample_mask(real_train_idx,  n_nodes)
     val_mask   = sample_mask(fold_val_idx,    n_nodes)
     test_mask  = sample_mask(fold_test_idx,   n_nodes)
-
-    labels = y_train + y_val + y_test   # full label matrix from load_corpus
 
     y_train = np.zeros(labels.shape)
     y_val   = np.zeros(labels.shape)
@@ -269,8 +273,8 @@ def encode_input(text, tokenizer):
 
 
 input_ids, attention_mask = encode_input(text, model.tokenizer)
-input_ids = th.cat([input_ids[:-nb_test], th.zeros((nb_word, max_length), dtype=th.long), input_ids[-nb_test:]])
-attention_mask = th.cat([attention_mask[:-nb_test], th.zeros((nb_word, max_length), dtype=th.long), attention_mask[-nb_test:]])
+input_ids = th.cat([input_ids[:-orig_nb_test], th.zeros((nb_word, max_length), dtype=th.long), input_ids[-orig_nb_test:]])
+attention_mask = th.cat([attention_mask[:-orig_nb_test], th.zeros((nb_word, max_length), dtype=th.long), attention_mask[-orig_nb_test:]])
 
 # transform one-hot label to class ID for pytorch computation
 y = y_train + y_test + y_val

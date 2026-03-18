@@ -141,6 +141,20 @@ def _parse_results(path: str) -> dict:
                 metrics['f1_' + m.group(1).lower().replace(' ', '_')] = float(m.group(2))
     return metrics
 
+def _build_corpus_to_node_map(data_dir: str, dataset: str) -> dict:
+    """
+    Reads data/<dataset>_shuffle.txt to map original corpus row index
+    → shuffled graph node position. build_graph.py writes this file
+    with doc names like 'doc_42' whose number is the original row index.
+    """
+    corpus_to_node = {}
+    with open(f'{data_dir}/{dataset}_shuffle.txt', 'r', encoding='utf-8') as fh:
+        for node_idx, line in enumerate(fh):
+            parts = line.strip().split('\t')
+            if parts:
+                orig_idx = int(parts[0].split('_')[1])
+                corpus_to_node[orig_idx] = node_idx
+    return corpus_to_node
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Per-seed CV run
@@ -173,6 +187,7 @@ def run_kfold(
     )
 
     fold_metrics = []
+    corpus_to_node = _build_corpus_to_node_map(data_dir, DATASET)
 
     with tempfile.TemporaryDirectory() as tmpdir:
         for fold_id, train_doc_idx, test_doc_idx in splitter:
@@ -197,8 +212,9 @@ def run_kfold(
 
             train_file = os.path.join(tmpdir, f'train_fold{fold_id}.txt')
             test_file  = os.path.join(tmpdir, f'test_fold{fold_id}.txt')
-            _write_index_file(train_doc_idx, train_file)
-            _write_index_file(test_doc_idx,  test_file)
+            _write_index_file([corpus_to_node[i] for i in train_doc_idx], train_file)
+            _write_index_file([corpus_to_node[i] for i in test_doc_idx],  test_file)
+
 
             ckpt_dir = (
                 f'./checkpoint/{DATASET}_fold{fold_id}_seed{seed}_{gcn_model}_'
