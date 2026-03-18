@@ -19,17 +19,20 @@ parser.add_argument('dataset', type=str, help='Dataset name')
 parser.add_argument('--seed', type=int, default=42, help='Random seed for reproducibility')
 parser.add_argument('--conversation_weight', type=float, default=1.0, 
                    help='Weight for conversation edges (only for Twitter datasets)')
+parser.add_argument('--no_conversation_edges', action='store_true', 
+                   help='Do not build conversation edges, even for Twitter datasets')
 args = parser.parse_args()
 
 dataset = args.dataset
 seed = args.seed
 conversation_weight = args.conversation_weight
+no_conversation_edges = args.no_conversation_edges
 
 # Set random seeds for reproducibility
 random.seed(seed)
 np.random.seed(seed)
 print(f"Using random seed: {seed}")
-has_conversations = dataset == 'twitter'
+has_conversations = (dataset == 'twitter') and (not no_conversation_edges)
 if has_conversations:
     print(f"✓ Twitter dataset detected: {dataset}")
     print(f"  Conversation edge weight: {conversation_weight}")
@@ -43,7 +46,6 @@ if has_conversations:
     else:
         print(f"  ⚠ No conversation mapping found at {conversation_map_path}")
         print(f"  Continuing without conversation edges")
-        has_conversations = False
         conversation_map = {}
 else:
     print(f"Standard dataset: {dataset} (no conversation edges)")
