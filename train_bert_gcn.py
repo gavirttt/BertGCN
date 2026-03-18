@@ -25,7 +25,10 @@ parser.add_argument('--nb_epochs', type=int, default=50)
 parser.add_argument('--bert_init', type=str, default='roberta-base',
                     choices=['roberta-base', 'roberta-large', 'bert-base-uncased', 'bert-large-uncased', 'jcblaise/roberta-tagalog-base'])
 parser.add_argument('--pretrained_bert_ckpt', default=None)
-parser.add_argument('--dataset', default='20ng', choices=['20ng', 'R8', 'R52', 'ohsumed', 'mr', 'isarcasm', 'semeval3a', 'twitter'])
+parser.add_argument('--dataset', default='20ng',
+                    help='Dataset name. Accepts any string — standard names '
+                         '(20ng, R8, R52, ohsumed, mr, isarcasm, semeval3a, twitter) '
+                         'or fold-specific names for k-fold CV.')
 parser.add_argument('--checkpoint_dir', default=None, help='checkpoint directory, [bert_init]_[gcn_model]_[dataset] if not specified')
 parser.add_argument('--gcn_model', type=str, default='gcn', choices=['gcn', 'gat'])
 parser.add_argument('--gcn_layers', type=int, default=2)
@@ -39,6 +42,18 @@ parser.add_argument('--device', type=str, default='cuda', choices=['cuda', 'cpu'
 parser.add_argument('--patience', type=int, default=10, help='early stopping patience')
 parser.add_argument('--use_custom_test', action='store_true', help='use custom test set for semeval3a dataset')
 parser.add_argument('--encoding', type=str, default='utf-8', help='file encoding for corpus files')
+
+# ── K-fold: override train/test masks at runtime ────────────────────
+# When these are supplied, load_corpus() still loads the full graph (ind.* files
+# built from ALL documents). Only the masks are replaced with the fold indices.
+# The graph structure — nodes, edges, word nodes — remains unchanged.
+parser.add_argument('--train_indices', type=str, default=None,
+                    help='Path to text file with train doc indices (one per line). '
+                         'When provided, overrides the train mask from load_corpus().')
+parser.add_argument('--test_indices', type=str, default=None,
+                    help='Path to text file with test doc indices (one per line). '
+                         'When provided, overrides the test mask from load_corpus().')
+
 args = parser.parse_args()
 max_length = args.max_length
 batch_size = args.batch_size
@@ -60,6 +75,13 @@ device_type = args.device
 patience = args.patience
 use_custom_test = args.use_custom_test
 file_encoding = args.encoding
+train_indices_path = args.train_indices
+test_indices_path = args.test_indices
+
+# Detect k-fold mode: both index files must be provided together
+kfold_mode = (train_indices_path is not None) and (test_indices_path is not None)
+if (train_indices_path is None) != (test_indices_path is None):
+    raise ValueError('--train_indices and --test_indices must be provided together.')
 
 # Set random seeds for reproducibility
 import random
@@ -106,6 +128,7 @@ logger.info(str(args))
 logger.info('Random seed: {}'.format(seed))
 logger.info('Device: {}'.format(device_type))
 logger.info('File encoding: {}'.format(file_encoding))
+logger.info('K-fold mode: {}'.format(kfold_mode))
 logger.info('checkpoints will be saved in {}'.format(ckpt_dir))
 # Model
 
@@ -124,7 +147,70 @@ nb_train, nb_val, nb_test = train_mask.sum(), val_mask.sum(), test_mask.sum()
 nb_word = nb_node - nb_train - nb_val - nb_test
 nb_class = y_train.shape[1]
 
-# instantiate model according to class number
+# ── K-fold mask override ─────────────────────────────────────────────────────────
+# Replace train/val/test masks with the fold indices supplied by the orchestrator.
+# The graph (adj, features) is untouched — it was built from ALL documents.
+#
+# load_corpus() returns masks indexed over the full node space:
+#   [0 .. nb_train-1]                         = train doc nodes
+#   [nb_train .. nb_train+nb_val-1]            = val doc nodes
+#   [nb_train+nb_val .. nb_train+nb_val+nb_word-1] = word nodes
+#   [nb_train+nb_val+nb_word .. nb_node-1]     = test doc nodes
+#
+# When --train_indices / --test_indices are provided we rebuild those masks
+# from scratch, using the raw document indices (positions in the original
+# corpus file) supplied by run_kfold_twitter.py.
+
+if kfold_mode:
+    def _read_index_file(path):
+        with open(path, 'r', encoding='utf-8') as fh:
+            return [int(line.strip()) for line in fh if line.strip()]
+
+    fold_train_idx = _read_index_file(train_indices_path)
+    fold_test_idx  = _read_index_file(test_indices_path)
+
+    # The fold splitter operates on the *labeled* document indices (positions
+    # in the original corpus / .txt file).  load_corpus() maps those positions
+    # into the shuffled node space via the .train.index file.  For Option A the
+    # graph was built from all documents, so the shuffled order in
+    # data/<dataset>_shuffle.txt matches the original row order exactly
+    # (build_graph.py writes train first, then test, but here we rebuilt the
+    # full document pool without an explicit test split).  We therefore treat
+    # the fold indices as direct node indices into the graph.
+
+    # 90/10 val split taken from the fold's training set
+    random.shuffle(fold_train_idx)
+    val_count       = int(0.1 * len(fold_train_idx))
+    real_train_idx  = fold_train_idx[val_count:]   # 90% → actual train nodes
+    fold_val_idx    = fold_train_idx[:val_count]   # 10% → validation nodes
+
+    fold_train_size = len(fold_train_idx)
+    fold_val_size   = len(fold_val_idx)
+    fold_test_size  = len(fold_test_idx)
+
+    n_nodes = nb_node
+    train_mask = sample_mask(real_train_idx,  n_nodes)
+    val_mask   = sample_mask(fold_val_idx,    n_nodes)
+    test_mask  = sample_mask(fold_test_idx,   n_nodes)
+
+    labels = y_train + y_val + y_test   # full label matrix from load_corpus
+
+    y_train = np.zeros(labels.shape)
+    y_val   = np.zeros(labels.shape)
+    y_test  = np.zeros(labels.shape)
+    y_train[train_mask, :] = labels[train_mask, :]
+    y_val  [val_mask,   :] = labels[val_mask,   :]
+    y_test [test_mask,  :] = labels[test_mask,  :]
+
+    nb_train = train_mask.sum()
+    nb_val   = val_mask.sum()
+    nb_test  = test_mask.sum()
+
+    logger.info('K-fold mask override applied:')
+    logger.info('  Fold train (real) : {}'.format(len(real_train_idx)))
+    logger.info('  Fold val          : {}'.format(fold_val_size))
+    logger.info('  Fold test         : {}'.format(fold_test_size))
+
 if gcn_model == 'gcn':
     model = BertGCN(nb_class=nb_class, pretrained_model=bert_init, m=m, gcn_layers=gcn_layers,
                     n_hidden=n_hidden, dropout=dropout)
@@ -206,11 +292,25 @@ g.ndata['cls_feats'] = th.zeros((nb_node, model.feat_dim))
 logger.info('graph information:')
 logger.info(str(g))
 
-# create index loader
-train_idx = Data.TensorDataset(th.arange(0, nb_train, dtype=th.long))
-val_idx = Data.TensorDataset(th.arange(nb_train, nb_train + nb_val, dtype=th.long))
-test_idx = Data.TensorDataset(th.arange(nb_node-nb_test, nb_node, dtype=th.long))
-doc_idx = Data.ConcatDataset([train_idx, val_idx, test_idx])
+# ── Index loaders ─────────────────────────────────────────────────────────────
+# In k-fold mode the "train / val / test" node indices are no longer contiguous
+# blocks, so we cannot use simple arange slices.  We derive them from the masks.
+
+if kfold_mode:
+    train_node_idx = th.where(th.BoolTensor(train_mask))[0]
+    val_node_idx   = th.where(th.BoolTensor(val_mask))[0]
+    test_node_idx  = th.where(th.BoolTensor(test_mask))[0]
+    doc_node_idx   = th.where(th.BoolTensor(doc_mask))[0]
+
+    train_idx = Data.TensorDataset(train_node_idx)
+    val_idx   = Data.TensorDataset(val_node_idx)
+    test_idx  = Data.TensorDataset(test_node_idx)
+    doc_idx   = Data.TensorDataset(doc_node_idx)
+else:
+    train_idx = Data.TensorDataset(th.arange(0, nb_train, dtype=th.long))
+    val_idx   = Data.TensorDataset(th.arange(nb_train, nb_train + nb_val, dtype=th.long))
+    test_idx  = Data.TensorDataset(th.arange(nb_node - nb_test, nb_node, dtype=th.long))
+    doc_idx   = Data.ConcatDataset([train_idx, val_idx, test_idx])
 
 idx_loader_train = Data.DataLoader(train_idx, batch_size=batch_size, shuffle=True)
 idx_loader_val = Data.DataLoader(val_idx, batch_size=batch_size)
@@ -257,7 +357,7 @@ def update_feature():
         model = model.to(gpu)
         model.eval()
         cls_list = []
-        for i, batch in enumerate(dataloader):
+        for batch in dataloader:
             input_ids, attention_mask = [x.to(gpu) for x in batch]
             output = model.bert_model(input_ids=input_ids, attention_mask=attention_mask)[0][:, 0]
             cls_list.append(output.cpu())
@@ -503,6 +603,10 @@ with open(results_file, 'w', encoding='utf-8') as f:
     f.write("Seed: {}\n".format(seed))
     f.write("Device: {}\n".format(device_type))
     f.write("File encoding: {}\n".format(file_encoding))
+    f.write("K-fold mode: {}\n".format(kfold_mode))
+    if kfold_mode:
+        f.write("Train indices: {}\n".format(train_indices_path))
+        f.write("Test indices:  {}\n".format(test_indices_path))
     f.write("\n")
     f.write("Test Accuracy: {:.4f}\n".format(test_accuracy))
     f.write("Test F1 Macro: {:.4f}\n".format(test_f1_macro))
