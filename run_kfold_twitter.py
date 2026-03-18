@@ -43,6 +43,7 @@ from datetime import datetime
 
 import numpy as np
 import pandas as pd
+from tqdm import tqdm
 
 DATASET = 'twitter'
 
@@ -190,7 +191,7 @@ def run_kfold(
     corpus_to_node = _build_corpus_to_node_map(data_dir, DATASET)
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        for fold_id, train_doc_idx, test_doc_idx in splitter:
+        for fold_id, train_doc_idx, test_doc_idx in tqdm(splitter, desc=f'Seed {seed} K-Fold CV', unit='fold', leave=True):
 
             print(f'\n{"─"*60}')
             print(f'  FOLD {fold_id + 1}/{k}  '
@@ -243,6 +244,8 @@ def run_kfold(
                     '--batch_size',     str(batch_size),
                     '--bert_init',      bert_init,
                     '--checkpoint_dir', ckpt_dir,
+                    '--current_fold',   str(fold_id + 1),
+                    '--total_folds',    str(k),
                 ],
                 f'Train — fold {fold_id + 1}/{k}',
             )

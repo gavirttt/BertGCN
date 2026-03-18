@@ -16,6 +16,8 @@ import logging
 from datetime import datetime
 from torch.optim import lr_scheduler
 from model import BertGCN, BertGAT
+from tqdm import tqdm
+from ignite.contrib.handlers import ProgressBar
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--max_length', type=int, default=128, help='the input length for bert')
@@ -53,6 +55,8 @@ parser.add_argument('--train_indices', type=str, default=None,
 parser.add_argument('--test_indices', type=str, default=None,
                     help='Path to text file with test doc indices (one per line). '
                          'When provided, overrides the test mask from load_corpus().')
+parser.add_argument('--current_fold', type=int, default=0, help='Current fold number for k-fold CV')
+parser.add_argument('--total_folds', type=int, default=0, help='Total number of folds for k-fold CV')
 
 args = parser.parse_args()
 max_length = args.max_length
@@ -77,6 +81,8 @@ use_custom_test = args.use_custom_test
 file_encoding = args.encoding
 train_indices_path = args.train_indices
 test_indices_path = args.test_indices
+current_fold = args.current_fold
+total_folds = args.total_folds
 
 # Detect k-fold mode: both index files must be provided together
 kfold_mode = (train_indices_path is not None) and (test_indices_path is not None)
@@ -129,6 +135,8 @@ logger.info('Random seed: {}'.format(seed))
 logger.info('Device: {}'.format(device_type))
 logger.info('File encoding: {}'.format(file_encoding))
 logger.info('K-fold mode: {}'.format(kfold_mode))
+if kfold_mode:
+    logger.info(f'Current Fold: {current_fold}/{total_folds}')
 logger.info('checkpoints will be saved in {}'.format(ckpt_dir))
 # Model
 
@@ -485,6 +493,15 @@ def log_training_results(trainer):
 log_training_results.best_val_acc = 0
 log_training_results.patience_counter = 0
 g = update_feature()
+
+pbar = ProgressBar(persist=True, dynamic_ncols=True)
+pbar.attach(trainer, 
+             output_transform=lambda x: {
+                 'loss': x[0], 
+                 'acc': x[1],
+                 'fold': f'{current_fold}/{total_folds}' if kfold_mode else ''
+             })
+
 trainer.run(idx_loader, max_epochs=nb_epochs)
 
 # Final test evaluation with detailed metrics

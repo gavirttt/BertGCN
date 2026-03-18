@@ -21,4 +21,8 @@ python train_bert_gcn.py --dataset isarcasm --seed 42 --device cuda --nb_epochs 
 ## experiment run:
 python prepare_twt_dataset.py --csv data/tweets_labeled_set.csv --unlabeled_csv data/tweets_unlabeled_set.csv
 python build_graph.py twitter --seed 42
+
+### normal run
 python train_bert_gcn.py --dataset twitter --seed 42 --device cuda --nb_epochs 50 --bert_init jcblaise/roberta-tagalog-base
+### kfold cv run
+python run_kfold_twitter.py --k 5 --seed 42 --nb_epochs 50 --device cuda
