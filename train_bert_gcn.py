@@ -146,6 +146,11 @@ nb_node = features.shape[0]
 nb_train, nb_val, nb_test = train_mask.sum(), val_mask.sum(), test_mask.sum()
 nb_word = nb_node - nb_train - nb_val - nb_test
 nb_class = y_train.shape[1]
+# orig_nb_test reflects the corpus file layout (fixed across folds),
+# NOT the fold's test size. Word nodes sit between train/val docs and
+# test docs in the file. Do NOT replace this with nb_test after the
+# kfold override or the word-node zero padding will be inserted at
+# the wrong position.
 orig_nb_test = int(nb_test)
 
 # ── K-fold mask override ─────────────────────────────────────────────────────────
@@ -172,8 +177,8 @@ if kfold_mode:
 
     # The fold splitter operates on the *labeled* document indices (positions
     # in the original corpus / .txt file).  load_corpus() maps those positions
-    # into the shuffled node space via the .train.index file.  For Option A the
-    # graph was built from all documents, so the shuffled order in
+    # into the shuffled node space via the .train.index file.
+    # The graph was built from all documents, so the shuffled order in
     # data/<dataset>_shuffle.txt matches the original row order exactly
     # (build_graph.py writes train first, then test, but here we rebuilt the
     # full document pool without an explicit test split).  We therefore treat

@@ -1,5 +1,5 @@
 """
-run_kfold_twitter.py  (Option A — transductive k-fold)
+run_kfold_twitter.py  (Transductive k-fold)
 
 The graph is built ONCE from all documents before any CV loop starts.
 Per-fold, only the train/test masks change — the graph structure is unchanged.
@@ -173,7 +173,7 @@ def run_kfold(
 ) -> list:
 
     print(f'\n{"="*70}')
-    print(f'  TWITTER K-FOLD (Option A)  |  k={k}  seed={seed}  '
+    print(f'  TWITTER K-FOLD |  k={k}  seed={seed}  '
           f'conv_aware={keep_conversations}')
     print(f'  Graph is NOT rebuilt per fold — only masks change.')
     print(f'{"="*70}')
@@ -199,6 +199,12 @@ def run_kfold(
             idx_set = df.set_index('doc_index')
             print('  Train labels:', dict(idx_set.loc[train_doc_idx, 'label'].value_counts()))
             print('  Test  labels:', dict(idx_set.loc[test_doc_idx,  'label'].value_counts()))
+
+            test_label_counts = idx_set.loc[test_doc_idx, 'label'].value_counts()
+            if test_label_counts.min() < 5:
+                print(f'  ⚠ Warning: fold {fold_id+1} has only '
+                    f'{test_label_counts.min()} minority class test examples — '
+                    f'F1 for that class will be unreliable')
 
             if keep_conversations and conversation_map:
                 fold_set   = set(train_doc_idx) | set(test_doc_idx)
@@ -303,7 +309,7 @@ def _write_summary(all_results: dict, path: str):
 
 def main():
     parser = argparse.ArgumentParser(
-        description='K-fold CV for Twitter/BertGCN — Option A (transductive)')
+        description='K-fold CV for Twitter/BertGCN — (transductive)')
 
     parser.add_argument('--k',          type=int, default=5)
     parser.add_argument('--seed',       type=int, help='Single seed shorthand')
