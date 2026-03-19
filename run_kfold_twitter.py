@@ -19,6 +19,10 @@ Usage:
     # Single seed, 5-fold, conversation-aware (default)
     python run_kfold_twitter.py --k 5 --seed 42 --nb_epochs 50
 
+    # With pretrained BERT checkpoint
+    python run_kfold_twitter.py --k 5 --seed 42 --nb_epochs 50 \
+        --pretrained_bert_ckpt ./checkpoint/jcblaise/roberta-tagalog-base_twitter/checkpoint.pth
+
     # Multiple seeds, GPU
     python run_kfold_twitter.py --k 5 --seeds 42 43 44 --nb_epochs 50 --device cuda
 
@@ -172,12 +176,17 @@ def run_kfold(
     bert_init: str,
     keep_conversations: bool,
     data_dir: str,
+    pretrained_bert_ckpt: str = None,
 ) -> list:
 
     print(f'\n{"="*70}')
     print(f'  TWITTER K-FOLD |  k={k}  seed={seed}  '
           f'conv_aware={keep_conversations}')
     print(f'  Graph is NOT rebuilt per fold — only masks change.')
+    if pretrained_bert_ckpt:
+        print(f'  Pretrained BERT: {pretrained_bert_ckpt}')
+    else:
+        print(f'  Pretrained BERT: None (training from scratch)')
     print(f'{"="*70}')
 
     df, conversation_map = _load_labeled_df(data_dir)
@@ -232,25 +241,33 @@ def run_kfold(
             # Pass --dataset twitter (full graph) plus fold index files.
             # train_bert_gcn.py loads ind.twitter.* unchanged and only
             # replaces the train/val/test masks with these indices.
-            ok = _run(
-                [
-                    sys.executable, 'train_bert_gcn.py',
-                    '--dataset',        DATASET,
-                    '--train_indices',  train_file,
-                    '--test_indices',   test_file,
-                    '--seed',           str(seed),
-                    '--m',              str(m),
-                    '--nb_epochs',      str(nb_epochs),
-                    '--gcn_model',      gcn_model,
-                    '--device',         device,
-                    '--batch_size',     str(batch_size),
-                    '--bert_init',      bert_init,
-                    '--checkpoint_dir', ckpt_dir,
-                    '--current_fold',   str(fold_id + 1),
-                    '--total_folds',    str(k),
-                ],
-                f'Train — fold {fold_id + 1}/{k}',
-            )
+            # Build the command, conditionally adding --pretrained_bert_ckpt
+            cmd = [
+                sys.executable, 'train_bert_gcn.py',
+                '--dataset',        DATASET,
+                '--train_indices',  train_file,
+                '--test_indices',   test_file,
+                '--seed',           str(seed),
+                '--m',              str(m),
+                '--nb_epochs',      str(nb_epochs),
+                '--gcn_model',      gcn_model,
+                '--device',         device,
+                '--batch_size',     str(batch_size),
+                '--bert_init',      bert_init,
+                '--checkpoint_dir', ckpt_dir,
+                '--current_fold',   str(fold_id + 1),
+                '--total_folds',    str(k),
+            ]
+
+            # Only add pretrained_bert_ckpt if provided and the file actually exists
+            if pretrained_bert_ckpt is not None:
+                if os.path.exists(pretrained_bert_ckpt):
+                    cmd += ['--pretrained_bert_ckpt', pretrained_bert_ckpt]
+                else:
+                    print(f'  ⚠ Warning: pretrained_bert_ckpt not found at {pretrained_bert_ckpt}')
+                    print(f'  Continuing without pretrained BERT weights.')
+
+            ok = _run(cmd, f'Train — fold {fold_id + 1}/{k}')
 
             if not ok:
                 fold_metrics.append({})
@@ -328,6 +345,10 @@ def main():
     parser.add_argument('--batch_size', type=int, default=32)
     parser.add_argument('--bert_init',  type=str,
                         default='jcblaise/roberta-tagalog-base')
+    parser.add_argument('--pretrained_bert_ckpt', type=str, default=None,
+                        help='Path to pretrained BERT checkpoint from finetune_bert.py. '
+                             'If provided and the file exists, BERT weights are '
+                             'initialised from this checkpoint before each fold.')
     parser.add_argument('--keep_conversations', dest='keep_conversations',
                         action='store_true', default=True,
                         help='Use StratifiedGroupKFold (default)')
@@ -344,6 +365,14 @@ def main():
     if args.seed is not None and args.seed not in seeds:
         seeds = [args.seed] + seeds
 
+    # Resolve and validate the pretrained BERT checkpoint path once up front
+    pretrained_bert_ckpt = args.pretrained_bert_ckpt
+    if pretrained_bert_ckpt is not None:
+        pretrained_bert_ckpt = os.path.abspath(pretrained_bert_ckpt)
+        if not os.path.exists(pretrained_bert_ckpt):
+            print(f'⚠ Warning: --pretrained_bert_ckpt not found at {pretrained_bert_ckpt}')
+            print(f'  All folds will train BERT from scratch.')
+
     print('╔═════════════════════╗')
     print('║  Twitter K-Fold CV  ║')
     print('╚═════════════════════╝')
@@ -353,6 +382,7 @@ def main():
     print(f'  device             : {args.device}')
     print(f'  gcn model          : {args.gcn_model}')
     print(f'  bert init          : {args.bert_init}')
+    print(f'  pretrained ckpt    : {pretrained_bert_ckpt or "None (train from scratch)"}')
     print(f'  keep conversations : {args.keep_conversations}')
     print()
     print('  NOTE: The graph must already exist on disk.')
@@ -378,6 +408,7 @@ def main():
             bert_init          = args.bert_init,
             keep_conversations = args.keep_conversations,
             data_dir           = args.data_dir,
+            pretrained_bert_ckpt = pretrained_bert_ckpt,
         )
         all_results[seed] = fold_metrics
         _aggregate(fold_metrics, label=f'seed={seed}')
