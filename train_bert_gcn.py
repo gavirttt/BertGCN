@@ -572,6 +572,11 @@ if dataset in ['isarcasm', 'semeval3a']:
     logger.info("\n" + classification_report(all_labels, all_preds, 
                                             target_names=class_names, 
                                             digits=4))
+elif dataset in ['twitter']:
+    class_names = ['positive', 'negative', 'neutral']
+    logger.info("  F1 Positive: {:.4f}".format(test_f1_per_class[0]))
+    logger.info("  F1 Negative: {:.4f}".format(test_f1_per_class[1]))
+    logger.info("  F1 Neutral: {:.4f}".format(test_f1_per_class[2]))
 else:
     logger.info("\n" + classification_report(all_labels, all_preds, digits=4))
 
