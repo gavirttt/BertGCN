@@ -558,6 +558,11 @@ elif dataset in ['semeval3a']:
     class_names = ['not_ironic', 'ironic']
     logger.info("  F1 Not Ironic: {:.4f}".format(test_f1_per_class[0]))
     logger.info("  F1 Ironic: {:.4f}".format(test_f1_per_class[1]))
+elif dataset in ['twitter']:
+    class_name_map = {0: 'positive', 1: 'negative', 2: 'neutral'}
+    for i, f1 in enumerate(test_f1_per_class):
+        class_name = class_name_map.get(i, f'class_{i}')
+        logger.info("  F1 {}: {:.4f}".format(class_name.capitalize(), f1))
 else:
     for i, f1 in enumerate(test_f1_per_class):
         logger.info("  F1 Class {}: {:.4f}".format(i, f1))
@@ -651,6 +656,11 @@ with open(results_file, 'w', encoding='utf-8') as f:
         f.write(classification_report(all_labels, all_preds, 
                                      target_names=class_names, 
                                      digits=4))
+    elif dataset in ['twitter']:
+        class_name_map = {0: 'positive', 1: 'negative', 2: 'neutral'}
+        for i, f1 in enumerate(test_f1_per_class):
+            class_name = class_name_map.get(i, f'class_{i}')
+            f.write("F1 {}: {:.4f}\n".format(class_name.capitalize(), f1))
     else:
         f.write(classification_report(all_labels, all_preds, digits=4))
 
