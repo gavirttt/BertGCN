@@ -164,6 +164,7 @@ def _build_corpus_to_node_map(data_dir: str, dataset: str) -> dict:
 def run_kfold(
     k: int,
     seed: int,
+    m: float,
     nb_epochs: int,
     device: str,
     gcn_model: str,
@@ -238,6 +239,7 @@ def run_kfold(
                     '--train_indices',  train_file,
                     '--test_indices',   test_file,
                     '--seed',           str(seed),
+                    '--m',              str(m),
                     '--nb_epochs',      str(nb_epochs),
                     '--gcn_model',      gcn_model,
                     '--device',         device,
@@ -317,6 +319,7 @@ def main():
     parser.add_argument('--k',          type=int, default=5)
     parser.add_argument('--seed',       type=int, help='Single seed shorthand')
     parser.add_argument('--seeds',      type=int, nargs='+', default=[42])
+    parser.add_argument('--m',          type=float, default=0.7, help='the factor balancing BERT and GCN prediction')
     parser.add_argument('--nb_epochs',  type=int, default=50)
     parser.add_argument('--device',     type=str, default='cpu',
                         choices=['cpu', 'cuda'])
@@ -367,6 +370,7 @@ def main():
         fold_metrics = run_kfold(
             k                  = args.k,
             seed               = seed,
+            m                  = args.m,
             nb_epochs          = args.nb_epochs,
             device             = args.device,
             gcn_model          = args.gcn_model,
