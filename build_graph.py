@@ -243,8 +243,7 @@ Word definitions end
 label_set = set()
 for doc_meta in shuffle_doc_name_list:
     temp = doc_meta.split('\t')
-    if temp[2] != 'unlabeled':        # ← exclude unlabeled
-        label_set.add(temp[2])
+    label_set.add(temp[2])
 label_list = sorted(list(label_set))
 
 label_list_str = '\n'.join(label_list)
