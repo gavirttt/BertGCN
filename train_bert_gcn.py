@@ -6,13 +6,14 @@ import dgl
 import torch.utils.data as Data
 from ignite.engine import Events, create_supervised_evaluator, create_supervised_trainer, Engine
 from ignite.metrics import Accuracy, Loss
-from sklearn.metrics import accuracy_score, f1_score, classification_report
+from sklearn.metrics import accuracy_score, f1_score, classification_report, confusion_matrix
 import numpy as np
 import os
 import shutil
 import argparse
 import sys
 import logging
+import json
 from datetime import datetime
 from torch.optim import lr_scheduler
 from model import BertGCN, BertGAT
@@ -545,42 +546,66 @@ test_accuracy = accuracy_score(all_labels, all_preds)
 test_f1_macro = f1_score(all_labels, all_preds, average='macro')
 test_f1_per_class = f1_score(all_labels, all_preds, average=None)
 
+# Determine class names
+if dataset in ['isarcasm']:
+    class_names = ['not_sarcastic', 'sarcastic']
+elif dataset in ['semeval3a']:
+    class_names = ['not_ironic', 'ironic']
+elif dataset in ['twitter']:
+    class_names = ['positive', 'negative', 'neutral']
+else:
+    class_names = [str(i) for i in range(nb_class)]
+
 logger.info("\nTest Set Results:")
 logger.info("  Accuracy: {:.4f}".format(test_accuracy))
 logger.info("  F1 Macro: {:.4f}".format(test_f1_macro))
 
-# Get class names from dataset
 if dataset in ['isarcasm']:
-    class_names = ['not_sarcastic', 'sarcastic']
     logger.info("  F1 Not Sarcastic: {:.4f}".format(test_f1_per_class[0]))
     logger.info("  F1 Sarcastic: {:.4f}".format(test_f1_per_class[1]))
 elif dataset in ['semeval3a']:
-    class_names = ['not_ironic', 'ironic']
     logger.info("  F1 Not Ironic: {:.4f}".format(test_f1_per_class[0]))
     logger.info("  F1 Ironic: {:.4f}".format(test_f1_per_class[1]))
 elif dataset in ['twitter']:
-    class_name_map = {0: 'positive', 1: 'negative', 2: 'neutral'}
-    for i, f1 in enumerate(test_f1_per_class):
-        class_name = class_name_map.get(i, f'class_{i}')
-        logger.info("  F1 {}: {:.4f}".format(class_name.capitalize(), f1))
+    logger.info("  F1 Positive: {:.4f}".format(test_f1_per_class[0]))
+    logger.info("  F1 Negative: {:.4f}".format(test_f1_per_class[1]))
+    logger.info("  F1 Neutral: {:.4f}".format(test_f1_per_class[2]))
 else:
     for i, f1 in enumerate(test_f1_per_class):
         logger.info("  F1 Class {}: {:.4f}".format(i, f1))
 
 logger.info("\nDetailed Classification Report:")
-if dataset in ['isarcasm', 'semeval3a']:
-    logger.info("\n" + classification_report(all_labels, all_preds, 
-                                            target_names=class_names, 
-                                            digits=4))
-elif dataset in ['twitter']:
-    class_names = ['positive', 'negative', 'neutral']
-    logger.info("  F1 Positive: {:.4f}".format(test_f1_per_class[0]))
-    logger.info("  F1 Negative: {:.4f}".format(test_f1_per_class[1]))
-    logger.info("  F1 Neutral: {:.4f}".format(test_f1_per_class[2]))
-else:
-    logger.info("\n" + classification_report(all_labels, all_preds, digits=4))
-
+logger.info("\n" + classification_report(all_labels, all_preds,
+                                         target_names=class_names,
+                                         digits=4))
 logger.info("="*80)
+
+# ── NEW: Save confusion matrix ────────────────────────────────────────────────
+cm = confusion_matrix(all_labels, all_preds)
+
+# Pretty-print to log
+logger.info("\nConfusion Matrix (rows=true, cols=predicted):")
+header = "              " + "  ".join(f"{n:>14}" for n in class_names)
+logger.info(header)
+for i, row in enumerate(cm):
+    row_str = f"{class_names[i]:>14}  " + "  ".join(f"{v:>14}" for v in row)
+    logger.info(row_str)
+logger.info("")
+
+# Save as JSON (machine-readable, easy to load later for aggregation)
+cm_path = os.path.join(ckpt_dir, 'confusion_matrix.json')
+with open(cm_path, 'w', encoding='utf-8') as f:
+    json.dump({
+        'confusion_matrix': cm.tolist(),
+        'class_names': class_names,
+        'dataset': dataset,
+        'seed': seed,
+        'fold': current_fold if kfold_mode else None,
+        'accuracy': float(test_accuracy),
+        'f1_macro': float(test_f1_macro),
+    }, f, indent=2)
+logger.info("Confusion matrix saved to: {}".format(cm_path))
+# ── END confusion matrix ──────────────────────────────────────────────────────
 
 # Evaluate on custom test set if available
 if custom_test_loader is not None and custom_test_data is not None:
@@ -653,20 +678,22 @@ with open(results_file, 'w', encoding='utf-8') as f:
     elif dataset in ['semeval3a']:
         f.write("F1 Not Ironic: {:.4f}\n".format(test_f1_per_class[0]))
         f.write("F1 Ironic: {:.4f}\n".format(test_f1_per_class[1]))
+    elif dataset in ['twitter']:
+        f.write("F1 Positive: {:.4f}\n".format(test_f1_per_class[0]))
+        f.write("F1 Negative: {:.4f}\n".format(test_f1_per_class[1]))
+        f.write("F1 Neutral: {:.4f}\n".format(test_f1_per_class[2]))
     else:
         for i, f1 in enumerate(test_f1_per_class):
             f.write("F1 Class {}: {:.4f}\n".format(i, f1))
     f.write("\n")
-    if dataset in ['isarcasm', 'semeval3a']:
-        f.write(classification_report(all_labels, all_preds, 
-                                     target_names=class_names, 
-                                     digits=4))
-    elif dataset in ['twitter']:
-        class_name_map = {0: 'positive', 1: 'negative', 2: 'neutral'}
-        for i, f1 in enumerate(test_f1_per_class):
-            class_name = class_name_map.get(i, f'class_{i}')
-            f.write("F1 {}: {:.4f}\n".format(class_name.capitalize(), f1))
-    else:
-        f.write(classification_report(all_labels, all_preds, digits=4))
+    f.write(classification_report(all_labels, all_preds,
+                                  target_names=class_names,
+                                  digits=4))
+    f.write("\n")
+    # Also write confusion matrix to final_results.txt for human readability
+    f.write("Confusion Matrix (rows=true, cols=predicted):\n")
+    f.write("              " + "  ".join(f"{n:>14}" for n in class_names) + "\n")
+    for i, row in enumerate(cm):
+        f.write(f"{class_names[i]:>14}  " + "  ".join(f"{v:>14}" for v in row) + "\n")
 
 logger.info("Results saved to: {}".format(results_file))
