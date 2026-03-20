@@ -138,7 +138,7 @@ if [ ${#M_VALUES_NO_CONV[@]} -gt 0 ]; then
     section "STEP 5 — Build Graph (No Conversation Edges)"
     
     step "Running build_graph.py (No conversation edges)"
-    python build_graph.py twitter --seed $SEED --no_conversation_edges
+    /kaggle/working/venv/bin/python build_graph.py twitter --seed $SEED --no_conversation_edges
     
     echo "✓ Graph built (No conversation edges)"
     
@@ -153,7 +153,7 @@ if [ ${#M_VALUES_NO_CONV[@]} -gt 0 ]; then
         # Create summary filename with m value
         SUMMARY_FILE="kfold_no_conv_edges_m${M}_summary.csv"
         
-        python run_kfold_twitter.py \
+        /kaggle/working/venv/bin/python run_kfold_twitter.py \
             --k $K \
             --seed $SEED \
             --m $M \
@@ -178,7 +178,7 @@ if [ ${#M_VALUES_WITH_CONV[@]} -gt 0 ]; then
     section "Build Graph (With Conversation Edges)"
     
     step "Running build_graph.py (with conversation edges)"
-    python build_graph.py twitter --seed $SEED
+    /kaggle/working/venv/bin/python build_graph.py twitter --seed $SEED
     
     echo "✓ Graph built (with conversation edges)"
     
@@ -193,7 +193,7 @@ if [ ${#M_VALUES_WITH_CONV[@]} -gt 0 ]; then
         # Create summary filename with m value
         SUMMARY_FILE="kfold_with_conv_edges_m${M}_summary.csv"
         
-        python run_kfold_twitter.py \
+        /kaggle/working/venv/bin/python run_kfold_twitter.py \
             --k $K \
             --seed $SEED \
             --m $M \
