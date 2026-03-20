@@ -33,6 +33,8 @@ BERT_LR=2e-5
 BERT_FINETUNE_EPOCHS=10
 LABELED_CSV="data/tweets_labeled_set.csv"
 UNLABELED_CSV="data/tweets_unlabeled_set.csv"
+M_VALUES_NO_CONV=()
+M_VALUES_WITH_CONV=()
 
 # ── Parse command line arguments ─────────────────────────────────────────────
 show_help() {
@@ -132,7 +134,7 @@ fi
 # =============================================================================
 # OPTION A: Build graph No conversation edges
 # =============================================================================
-if [ ${#M_VALUES_WITH_CONV[@]} -gt 0 ]; then
+if [ ${#M_VALUES_NO_CONV[@]} -gt 0 ]; then
     section "STEP 5 — Build Graph (No Conversation Edges)"
     
     step "Running build_graph.py (No conversation edges)"
@@ -145,7 +147,7 @@ if [ ${#M_VALUES_WITH_CONV[@]} -gt 0 ]; then
     # =============================================================================
     section "STEP 6 — K-Fold CV: No Conversation Edges"
     
-    for M in "${M_VALUES_WITH_CONV[@]}"; do
+    for M in "${M_VALUES_NO_CONV[@]}"; do
         step "m=$M | no conversation edges"
         
         # Create summary filename with m value
