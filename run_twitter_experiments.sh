@@ -68,8 +68,7 @@ section "STEP 1 — Prepare Twitter Dataset"
 
 step "Running prepare_twt_dataset.py"
 python prepare_twt_dataset.py \
-    --csv "$LABELED_CSV" \
-    --unlabeled_csv "$UNLABELED_CSV"
+    --csv "$LABELED_CSV"
 
 echo "✓ Dataset prepared"
 
