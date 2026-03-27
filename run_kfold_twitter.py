@@ -152,13 +152,23 @@ def _build_corpus_to_node_map(data_dir: str, dataset: str) -> dict:
     → shuffled graph node position. build_graph.py writes this file
     with doc names like 'doc_42' whose number is the original row index.
     """
+    
+    with open(f'{data_dir}/{dataset}.train.index', 'r', encoding='utf-8') as fh:
+        train_size = len([l for l in fh if l.strip()])
+
+    with open(f'{data_dir}/corpus/{dataset}_vocab.txt', 'r', encoding='utf-8') as fh:
+        vocab_size = len([l for l in fh if l.strip()])
+
     corpus_to_node = {}
     with open(f'{data_dir}/{dataset}_shuffle.txt', 'r', encoding='utf-8') as fh:
         for node_idx, line in enumerate(fh):
             parts = line.strip().split('\t')
-            if parts:
+            if parts and parts[0]:
                 orig_idx = int(parts[0].split('_')[1])
-                corpus_to_node[orig_idx] = node_idx
+                if node_idx < train_size:
+                    corpus_to_node[orig_idx] = node_idx
+                else:
+                    corpus_to_node[orig_idx] = node_idx + vocab_size
     return corpus_to_node
 
 # ─────────────────────────────────────────────────────────────────────────────
