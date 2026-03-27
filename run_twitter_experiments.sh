@@ -14,7 +14,7 @@
 #
 # Outputs:
 #   ./checkpoint/twitter_fold*_seed*_*/   — per-fold BertGCN checkpoints
-#   ./checkpoint/jcblaise/roberta-tagalog-base_twitter/  — finetuned BERT
+#   ./checkpoint/dost-asti/RoBERTa-tl-sentiment-analysis_twitter/  — finetuned BERT
 #   kfold_no_conv_edges_summary.csv       — results for condition A
 #   kfold_with_conv_edges_summary.csv     — results for condition B
 # =============================================================================
@@ -26,12 +26,12 @@ SEED=42
 K=5
 NB_EPOCHS=5
 DEVICE=cuda
-BERT_INIT="jcblaise/roberta-tagalog-base"
+BERT_INIT="dost-asti/RoBERTa-tl-sentiment-analysis"
 BERT_LR=2e-5
 BERT_FINETUNE_EPOCHS=10
 LABELED_CSV="data/tweets_labeled_set.csv"
 UNLABELED_CSV="data/tweets_unlabeled_set.csv"
-BERT_CKPT="./checkpoint/jcblaise/roberta-tagalog-base_twitter/checkpoint.pth"
+BERT_CKPT="./checkpoint/dost-asti/RoBERTa-tl-sentiment-analysis_twitter/checkpoint.pth"
 
 # m values to sweep
 M_VALUES=(0.3 0.5 0.7 1.0)

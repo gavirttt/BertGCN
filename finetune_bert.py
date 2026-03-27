@@ -21,7 +21,7 @@ parser.add_argument('--nb_epochs', type=int, default=60)
 parser.add_argument('--bert_lr', type=float, default=1e-4)
 parser.add_argument('--dataset', default='20ng', choices=['20ng', 'R8', 'R52', 'ohsumed', 'mr', 'twitter'])
 parser.add_argument('--bert_init', type=str, default='roberta-base',
-                    choices=['roberta-base', 'roberta-large', 'bert-base-uncased', 'bert-large-uncased', 'jcblaise/roberta-tagalog-base'])
+                    choices=['roberta-base', 'roberta-large', 'bert-base-uncased', 'bert-large-uncased', 'jcblaise/roberta-tagalog-base', 'dost-asti/RoBERTa-tl-sentiment-analysis'])
 parser.add_argument('--checkpoint_dir', default=None, help='checkpoint directory, [bert_init]_[dataset] if not specified')
 parser.add_argument('--train_indices', type=str, default=None,
                     help='Path to text file with train doc indices (one per line). '
@@ -280,6 +280,14 @@ def log_training_results(trainer):
             )
         )
         log_training_results.best_val_f1 = val_f1
+        log_training_results.patience_counter = 0
+    else:
+        log_training_results.patience_counter += 1
+        logger.info(f"Patience: {log_training_results.patience_counter}/3")
+        
+        if log_training_results.patience_counter >= 3:
+            logger.info(f"Early stopping triggered after 3 epochs without improvement")
+            trainer.terminate()
     scheduler.step()
 
         
