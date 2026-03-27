@@ -26,6 +26,7 @@ parser.add_argument('--checkpoint_dir', default=None, help='checkpoint directory
 parser.add_argument('--train_indices', type=str, default=None,
                     help='Path to text file with train doc indices (one per line). '
                          'When provided, overrides the train mask from load_corpus().')
+parser.add_argument('--seed', type=int, default=42, help='random seed for reproducibility')
 
 args = parser.parse_args()
 
@@ -38,6 +39,7 @@ bert_init = args.bert_init
 checkpoint_dir = args.checkpoint_dir
 train_indices_path = args.train_indices
 kfold_mode = train_indices_path is not None
+seed = args.seed
 
 if checkpoint_dir is None:
     ckpt_dir = './checkpoint/{}_{}'.format(bert_init, dataset)
@@ -92,7 +94,7 @@ if kfold_mode:
     # 90/10 val split from fold's training set
     from sklearn.model_selection import StratifiedShuffleSplit
     fold_train_labels = [labels[i].argmax() for i in fold_train_idx]
-    sss = StratifiedShuffleSplit(n_splits=1, test_size=0.1, random_state=bert_lr)
+    sss = StratifiedShuffleSplit(n_splits=1, test_size=0.1, random_state=seed)
     tr_sub, val_sub = next(sss.split(fold_train_idx, fold_train_labels))
     real_train_idx = [fold_train_idx[i] for i in tr_sub]
     fold_val_idx   = [fold_train_idx[i] for i in val_sub]
