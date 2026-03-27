@@ -200,7 +200,7 @@ if kfold_mode:
     from sklearn.model_selection import StratifiedShuffleSplit
 
     fold_train_labels = [labels[i].argmax() for i in fold_train_idx]
-    sss = StratifiedShuffleSplit(n_splits=1, test_size=0.1, random_state=seed)
+    sss = StratifiedShuffleSplit(n_splits=1, test_size=0.15, random_state=seed)
     tr_sub, val_sub = next(sss.split(fold_train_idx, fold_train_labels))
     real_train_idx = [fold_train_idx[i] for i in tr_sub]
     fold_val_idx   = [fold_train_idx[i] for i in val_sub]
