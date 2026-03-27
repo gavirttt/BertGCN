@@ -5,7 +5,7 @@ from utils import *
 import dgl
 import torch.utils.data as Data
 from ignite.engine import Events, create_supervised_evaluator, create_supervised_trainer, Engine
-from ignite.metrics import Accuracy, Loss
+from ignite.metrics import Accuracy, Loss, F1
 from sklearn.metrics import accuracy_score, f1_score, classification_report, confusion_matrix
 import numpy as np
 import os
@@ -445,7 +445,8 @@ def test_step(engine, batch):
 evaluator = Engine(test_step)
 metrics={
     'acc': Accuracy(),
-    'nll': Loss(th.nn.NLLLoss())
+    'nll': Loss(th.nn.NLLLoss()),
+    'f1_weighted': F1(average='weighted')
 }
 for n, f in metrics.items():
     f.attach(evaluator, n)
