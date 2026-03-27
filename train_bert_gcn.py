@@ -156,22 +156,22 @@ nb_node = features.shape[0]
 nb_train, nb_val, nb_test = train_mask.sum(), val_mask.sum(), test_mask.sum()
 nb_word = nb_node - nb_train - nb_val - nb_test
 nb_class = y_train.shape[1]
-# orig_nb_test reflects the corpus file layout (fixed across folds),
-# NOT the fold's test size. Word nodes sit between train/val docs and
-# test docs in the file. Do NOT replace this with nb_test after the
-# kfold override or the word-node zero padding will be inserted at
-# the wrong position.
+# orig_nb_test reflects the GRAPH's fixed node layout, not the fold's test size.
+# The corpus file (_shuffle.txt) contains only [train_docs][test_docs] with no
+# word nodes. We insert nb_word zero-rows here to align the input_ids tensor
+# with the graph node layout, which is:
+#   [0 .. train_size-1]                     = train doc nodes
+#   [train_size .. train_size+vocab_size-1]  = word nodes (zeros, no BERT input)
+#   [train_size+vocab_size .. nb_node-1]     = test doc nodes
+#
+# orig_nb_test must be captured before the kfold override because it tells us
+# where to slice the corpus tensor — always at the original train/test boundary,
+# regardless of which fold's documents are labeled "test" this round.
 orig_nb_test = int(nb_test)
 
 # ── K-fold mask override ─────────────────────────────────────────────────────────
 # Replace train/val/test masks with the fold indices supplied by the orchestrator.
 # The graph (adj, features) is untouched — it was built from ALL documents.
-#
-# load_corpus() returns masks indexed over the full node space:
-#   [0 .. nb_train-1]                         = train doc nodes
-#   [nb_train .. nb_train+nb_val-1]            = val doc nodes
-#   [nb_train+nb_val .. nb_train+nb_val+nb_word-1] = word nodes
-#   [nb_train+nb_val+nb_word .. nb_node-1]     = test doc nodes
 #
 # When --train_indices / --test_indices are provided we rebuild those masks
 # from scratch, using the raw document indices (positions in the original
