@@ -242,7 +242,22 @@ def run_kfold(
             _write_index_file([corpus_to_node[i] for i in train_doc_idx], train_file)
             _write_index_file([corpus_to_node[i] for i in test_doc_idx],  test_file)
 
-
+            # Write fold train indices to temp file
+            fold_bert_train_file = os.path.join(tmpdir, f'bert_train_fold{fold_id}.txt')
+            _write_index_file(train_doc_idx, fold_bert_train_file)
+            
+            # Finetune BERT on this fold's train set only
+            fold_bert_ckpt = os.path.join(tmpdir, f'bert_fold{fold_id}.pth')
+            cmd_finetune = [
+                sys.executable, 'finetune_bert.py',
+                '--dataset', DATASET,
+                '--bert_init', bert_init,
+                '--train_indices', fold_bert_train_file,
+                '--checkpoint_dir', os.path.join(tmpdir, f'bert_ckpt_fold{fold_id}'),
+                '--nb_epochs', 10,
+            ]
+            _run(cmd_finetune, f'Finetune BERT — fold {fold_id + 1}/{k}')
+            
             ckpt_dir = (
                 f'./checkpoint/{DATASET}_fold{fold_id}_seed{seed}_{gcn_model}_'
                 f'{datetime.now().strftime("%Y%m%d_%H%M%S")}'
@@ -267,15 +282,8 @@ def run_kfold(
                 '--checkpoint_dir', ckpt_dir,
                 '--current_fold',   str(fold_id + 1),
                 '--total_folds',    str(k),
+                '--pretrained_bert_ckpt', fold_bert_ckpt
             ]
-
-            # Only add pretrained_bert_ckpt if provided and the file actually exists
-            if pretrained_bert_ckpt is not None:
-                if os.path.exists(pretrained_bert_ckpt):
-                    cmd += ['--pretrained_bert_ckpt', pretrained_bert_ckpt]
-                else:
-                    print(f'  ⚠ Warning: pretrained_bert_ckpt not found at {pretrained_bert_ckpt}')
-                    print(f'  Continuing without pretrained BERT weights.')
 
             ok = _run(cmd, f'Train — fold {fold_id + 1}/{k}')
 
