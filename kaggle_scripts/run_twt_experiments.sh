@@ -30,7 +30,6 @@ NB_EPOCHS=5
 DEVICE=cuda
 BERT_INIT="jcblaise/roberta-tagalog-base"
 BERT_LR=2e-5
-BERT_FINETUNE_EPOCHS=10
 LABELED_CSV="data/tweets_labeled_set.csv"
 UNLABELED_CSV="data/tweets_unlabeled_set.csv"
 M_VALUES_NO_CONV=()
@@ -160,7 +159,6 @@ if [ ${#M_VALUES_NO_CONV[@]} -gt 0 ]; then
             --nb_epochs $NB_EPOCHS \
             --device $DEVICE \
             --bert_init "$BERT_INIT" \
-            --pretrained_bert_ckpt "$BERT_CKPT" \
             --no_keep_conversations \
             --summary_file "$SUMMARY_FILE"
         
@@ -200,7 +198,6 @@ if [ ${#M_VALUES_WITH_CONV[@]} -gt 0 ]; then
             --nb_epochs $NB_EPOCHS \
             --device $DEVICE \
             --bert_init "$BERT_INIT" \
-            --pretrained_bert_ckpt "$BERT_CKPT" \
             --summary_file "$SUMMARY_FILE"
         
         echo "✓ Completed m=$M (with conversation edges) -> $SUMMARY_FILE"
