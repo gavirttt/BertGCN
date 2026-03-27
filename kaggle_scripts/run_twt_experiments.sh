@@ -25,7 +25,7 @@ set -e  # Exit immediately on any error
 
 # ── Configurable parameters ──────────────────────────────────────────────────
 SEED=42
-K=5
+K=10
 NB_EPOCHS=5
 DEVICE=cuda
 BERT_INIT="dost-asti/RoBERTa-tl-sentiment-analysis"
