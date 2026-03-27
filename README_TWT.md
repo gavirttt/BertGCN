@@ -2,12 +2,9 @@
 
 ## Overview
 
-This pipeline runs an ablation study on a Twitter sentiment dataset using BertGCN. It investigates two research questions:
+This pipeline runs an ablation study on a Twitter sentiment dataset using BertGCN. It investigates whether adding conversation-based graph edges improves performance with a fixed balance factor between BERT and GCN predictions.
 
-1. **Does adding conversation-based graph edges improve performance?**
-2. **What is the optimal balance (`m`) between BERT and GCN predictions?**
-
-The study sweeps `m ∈ {0.3, 0.5, 0.7, 1.0}` across two graph conditions — with and without conversation edges — using 5-fold cross-validation. A pretrained BERT checkpoint is shared across all conditions.
+Following Lin et al. (2021), who report that BertGCN achieves optimal performance at `m = 0.7`, we use this value as our pre-specified hyperparameter for all primary comparisons. A pretrained BERT checkpoint is shared across all conditions.
 
 ### What `m` controls
 
@@ -16,13 +13,6 @@ The final prediction is a weighted combination of BERT and GCN outputs:
 ```
 pred = gcn_pred * m + cls_pred * (1 - m)
 ```
-
-| `m` value | Behavior |
-|-----------|----------|
-| `0.3` | Mostly BERT, light GCN influence |
-| `0.5` | Equal BERT and GCN contribution |
-| `0.7` | Mostly GCN, some BERT influence |
-| `1.0` | Pure GCN (BERT classifier output ignored) |
 
 ### Sentiment label mapping
 
@@ -87,7 +77,6 @@ Verify that the following are in the `data/` directory before running:
 | File | Description |
 |------|-------------|
 | `data/tweets_labeled_set.csv` | Labeled tweets with columns: `pseudo_id`, `text`, `sentiment`, `pseudo_conversationId` |
-| `data/tweets_unlabeled_set.csv` | Unlabeled tweets (becomes the transductive test set) |
 
 ---
 
@@ -100,17 +89,17 @@ The full pipeline has 6 steps. Each step and its purpose is described below.
 ```bash
 python prepare_twt_dataset.py \
     --csv data/tweets_labeled_set.csv \
-    --unlabeled_csv data/tweets_unlabeled_set.csv
+    --test_split_ratio 0.1
 ```
 
-Reads both CSVs, cleans tweet text, and writes the following files to `data/`:
+Reads the labeled CSV, cleans tweet text, and writes the following files to `data/`:
 
 - `twitter.txt` — document index file (doc_id, split, label)
 - `corpus/twitter.txt` — raw tweet text
 - `corpus/twitter.clean.txt` — cleaned tweet text
 - `twitter_conversations.pkl` — conversation grouping map
 
-The labeled tweets are assigned `split=train` and the unlabeled tweets become `split=test` for the transductive graph setup. The graph builder internally creates a 90/10 validation split from the training data.
+The labeled tweets are split into training (90%) and test (10%) sets. The graph builder will internally create a 90/10 validation split from the training data (i.e., 81% train, 9% validation, 10% test overall).
 
 ---
 
@@ -155,20 +144,18 @@ This checkpoint is **reused for all subsequent k-fold runs** across both graph c
 
 ### Step 4 — K-fold CV: no conversation edges
 
-Run once per `m` value:
+Run with fixed `m = 0.7`:
 
 ```bash
 python run_kfold_twitter.py \
     --k 5 \
     --seed 42 \
-    --m 0.0 \
+    --m 0.7 \
     --nb_epochs 5 \
     --device cuda \
     --bert_init jcblaise/roberta-tagalog-base \
     --pretrained_bert_ckpt ./checkpoint/jcblaise/roberta-tagalog-base_twitter/checkpoint.pth \
-    --summary_file kfold_no_conv_edges_m0.0_summary.csv
-
-# Repeat for m = 0.3, 0.5, 0.7, 1.0
+    --summary_file kfold_no_conv_edges_m0.7_summary.csv
 ```
 
 ---
@@ -185,20 +172,18 @@ Rebuilds the graph with conversation-based edges added on top of the word-docume
 
 ### Step 6 — K-fold CV: with conversation edges
 
-Same commands as Step 4, but now the graph on disk contains conversation edges. The same pretrained BERT checkpoint is reused.
+Same command as Step 4, but now the graph on disk contains conversation edges. The same pretrained BERT checkpoint is reused.
 
 ```bash
 python run_kfold_twitter.py \
     --k 5 \
     --seed 42 \
-    --m 0.0 \
+    --m 0.7 \
     --nb_epochs 5 \
     --device cuda \
     --bert_init jcblaise/roberta-tagalog-base \
     --pretrained_bert_ckpt ./checkpoint/jcblaise/roberta-tagalog-base_twitter/checkpoint.pth \
-    --summary_file kfold_with_conv_edges_m0.0_summary.csv
-
-# Repeat for m = 0.3, 0.5, 0.7, 1.0
+    --summary_file kfold_with_conv_edges_m0.7_summary.csv
 ```
 
 ---
@@ -222,10 +207,30 @@ DEVICE=cuda
 BERT_INIT="jcblaise/roberta-tagalog-base"
 BERT_LR=2e-5
 BERT_FINETUNE_EPOCHS=10
-M_VALUES=(0.0 0.3 0.5 0.7 1.0)
+TEST_SPLIT_RATIO=0.1
+M_VALUE=0.7
 ```
 
 The script will exit immediately if any step fails (`set -e`). It also validates that the BERT checkpoint was saved before proceeding to the k-fold runs.
+
+---
+
+## K-Fold Split
+
+With `k=5`, each fold gets:
+- **Test**: 20% of all documents (1 fold out of 5)
+- **Remaining**: 80% goes to the fold's training pool
+
+Then inside `train_bert_gcn.py`, the 80% training pool is split 90/10 via `StratifiedShuffleSplit`:
+- **Real train**: 72% of all documents (90% of 80%)
+- **Val**: 8% of all documents (10% of 80%)
+
+So each fold's effective split is:
+```
+Real train : 72%
+Val        :  8%
+Test       : 20%
+```
 
 ---
 
@@ -253,30 +258,17 @@ Each fold produces a timestamped directory:
 
 ### Summary CSVs
 
-One CSV per condition and `m` value:
+One CSV per condition:
 
 ```
-kfold_no_conv_edges_m0.0_summary.csv
-kfold_no_conv_edges_m0.3_summary.csv
-kfold_no_conv_edges_m0.5_summary.csv
 kfold_no_conv_edges_m0.7_summary.csv
-kfold_no_conv_edges_m1.0_summary.csv
-kfold_with_conv_edges_m0.0_summary.csv
-kfold_with_conv_edges_m0.3_summary.csv
-kfold_with_conv_edges_m0.5_summary.csv
 kfold_with_conv_edges_m0.7_summary.csv
-kfold_with_conv_edges_m1.0_summary.csv
 ```
 
 Each CSV contains:
 
 ```
 seed,fold,accuracy,f1_macro,checkpoint
-42,1,0.8234,0.8101,./checkpoint/twitter_fold0_seed42_gcn_20260319_143022
-42,2,0.8102,0.7934,./checkpoint/twitter_fold1_seed42_gcn_20260319_151245
-42,3,0.8312,0.8201,./checkpoint/twitter_fold2_seed42_gcn_20260319_155512
-42,4,0.8198,0.8045,./checkpoint/twitter_fold3_seed42_gcn_20260319_163801
-42,5,0.8267,0.8123,./checkpoint/twitter_fold4_seed42_gcn_20260319_172034
 ```
 
 ### Per-fold `final_results.txt` example
@@ -359,7 +351,7 @@ ls ./checkpoint/jcblaise/roberta-tagalog-base_twitter/checkpoint.pth
 | `--k` | `5` | Number of folds |
 | `--seed` | — | Single seed (shorthand for `--seeds`) |
 | `--seeds` | `[42]` | List of seeds |
-| `--m` | `0.7` | BERT/GCN balance factor |
+| `--m` | `0.7` | BERT/GCN balance factor (fixed at 0.7) |
 | `--nb_epochs` | `50` | Max training epochs per fold |
 | `--device` | `cpu` | `cpu` or `cuda` |
 | `--bert_init` | `jcblaise/roberta-tagalog-base` | Base BERT model |
@@ -367,6 +359,16 @@ ls ./checkpoint/jcblaise/roberta-tagalog-base_twitter/checkpoint.pth
 | `--keep_conversations` | `True` | Use StratifiedGroupKFold (conversation-aware splits) |
 | `--no_keep_conversations` | — | Use plain StratifiedKFold instead |
 | `--summary_file` | `kfold_twitter_summary.csv` | Output CSV path |
+
+### `prepare_twt_dataset.py`
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `--csv` | — | Path to labeled tweets CSV file (required) |
+| `--output_dir` | `data` | Output directory |
+| `--dataset_name` | `twitter` | Dataset name |
+| `--seed` | `42` | Random seed for reproducibility |
+| `--test_split_ratio` | `0.2` | Ratio of data to use as test set (use `0.1` for this pipeline) |
 
 ### `build_graph.py`
 
