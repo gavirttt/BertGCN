@@ -236,7 +236,15 @@ def run_kfold(
 
     fold_metrics = []
     corpus_to_node = _build_corpus_to_node_map(data_dir, DATASET)
-
+    # ---------------------Sanity check-------------------------
+    with open(f'{data_dir}/{DATASET}.train.index', 'r', encoding='utf-8') as fh:
+        train_size = len([l for l in fh if l.strip()])
+    with open(f'{data_dir}/corpus/{DATASET}_vocab.txt', 'r', encoding='utf-8') as fh:
+        vocab_size = len([l for l in fh if l.strip()])
+    train_nodes = [v for v in corpus_to_node.values() if v < train_size]
+    test_nodes = [v for v in corpus_to_node.values() if v >= train_size + vocab_size]
+    print(f"Train-position docs: {len(train_nodes)}, Test-position docs: {len(test_nodes)}")
+    # ----------------------------------------------------------
     with tempfile.TemporaryDirectory() as tmpdir:
         for fold_id, train_doc_idx, test_doc_idx in tqdm(splitter, desc=f'Seed {seed} K-Fold CV', unit='fold', leave=True):
 
