@@ -455,18 +455,21 @@ for n, f in metrics.items():
 def log_training_results(trainer):
     evaluator.run(idx_loader_train)
     metrics = evaluator.state.metrics
-    train_acc, train_nll = metrics["acc"], metrics["nll"]
+    train_acc, train_nll, train_f1 = metrics["acc"], metrics["nll"], metrics["f1_weighted"]
     evaluator.run(idx_loader_val)
     metrics = evaluator.state.metrics
-    val_acc, val_nll = metrics["acc"], metrics["nll"]
+    val_acc, val_nll, val_f1 = metrics["acc"], metrics["nll"], metrics["f1_weighted"]
+    evaluator.run(idx_loader_test)
+    metrics = evaluator.state.metrics
+    test_acc, test_nll, test_f1 = metrics["acc"], metrics["nll"], metrics["f1_weighted"]
     
     logger.info(
-        "Epoch: {}  Train acc: {:.4f} loss: {:.4f}  Val acc: {:.4f} loss: {:.4f}"
-        .format(trainer.state.epoch, train_acc, train_nll, val_acc, val_nll)
+        "\rEpoch: {}  Train f1: {:.4f} loss: {:.4f}  Val f1: {:.4f} loss: {:.4f}  Test f1: {:.4f} loss: {:.4f}"
+        .format(trainer.state.epoch, train_f1, train_nll, val_f1, val_nll, test_f1, test_nll)
     )
     
     # Early stopping logic
-    if val_acc > log_training_results.best_val_acc:
+    if val_f1 > log_training_results.best_val_f1:
         logger.info("New checkpoint")
         th.save(
             {
@@ -480,7 +483,7 @@ def log_training_results(trainer):
                 ckpt_dir, 'checkpoint.pth'
             )
         )
-        log_training_results.best_val_acc = val_acc
+        log_training_results.best_val_f1 = val_f1
         log_training_results.patience_counter = 0
     else:
         log_training_results.patience_counter += 1
