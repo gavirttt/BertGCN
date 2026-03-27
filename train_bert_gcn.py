@@ -510,7 +510,7 @@ def log_training_results(trainer):
                 'bert_model': model.bert_model.state_dict(),
                 'classifier': model.classifier.state_dict(),
                 'gcn': model.gcn.state_dict(),
-                'optimizer': optimizer.state_dict(),
+                # 'optimizer': optimizer.state_dict(),
                 'epoch': trainer.state.epoch,
             },
             os.path.join(
