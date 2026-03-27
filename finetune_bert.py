@@ -23,6 +23,9 @@ parser.add_argument('--dataset', default='20ng', choices=['20ng', 'R8', 'R52', '
 parser.add_argument('--bert_init', type=str, default='roberta-base',
                     choices=['roberta-base', 'roberta-large', 'bert-base-uncased', 'bert-large-uncased', 'jcblaise/roberta-tagalog-base'])
 parser.add_argument('--checkpoint_dir', default=None, help='checkpoint directory, [bert_init]_[dataset] if not specified')
+parser.add_argument('--train_indices', type=str, default=None,
+                    help='Path to text file with train doc indices (one per line). '
+                         'When provided, overrides the train mask from load_corpus().')
 
 args = parser.parse_args()
 
@@ -33,6 +36,9 @@ bert_lr = args.bert_lr
 dataset = args.dataset
 bert_init = args.bert_init
 checkpoint_dir = args.checkpoint_dir
+train_indices_path = args.train_indices
+kfold_mode = train_indices_path is not None
+
 if checkpoint_dir is None:
     ckpt_dir = './checkpoint/{}_{}'.format(bert_init, dataset)
 else:
@@ -73,13 +79,57 @@ nb_train, nb_val, nb_test = train_mask.sum(), val_mask.sum(), test_mask.sum()
 nb_word = nb_node - nb_train - nb_val - nb_test
 nb_class = y_train.shape[1]
 
+# ── K-fold mask override ──────────────────────────────────────────────────────
+if kfold_mode:
+    def _read_index_file(path):
+        with open(path, 'r', encoding='utf-8') as fh:
+            return [int(line.strip()) for line in fh if line.strip()]
+
+    fold_train_idx = _read_index_file(train_indices_path)
+
+    labels = y_train + y_val + y_test
+
+    # 90/10 val split from fold's training set
+    from sklearn.model_selection import StratifiedShuffleSplit
+    fold_train_labels = [labels[i].argmax() for i in fold_train_idx]
+    sss = StratifiedShuffleSplit(n_splits=1, test_size=0.1, random_state=bert_lr)
+    tr_sub, val_sub = next(sss.split(fold_train_idx, fold_train_labels))
+    real_train_idx = [fold_train_idx[i] for i in tr_sub]
+    fold_val_idx   = [fold_train_idx[i] for i in val_sub]
+
+    n_nodes = nb_node
+    train_mask = sample_mask(real_train_idx, n_nodes)
+    val_mask   = sample_mask(fold_val_idx,   n_nodes)
+
+    y_train = np.zeros(labels.shape)
+    y_val   = np.zeros(labels.shape)
+    y_train[train_mask, :] = labels[train_mask, :]
+    y_val  [val_mask,   :] = labels[val_mask,   :]
+
+    nb_train = train_mask.sum()
+    nb_val   = val_mask.sum()
+
+    logger.info('K-fold mask override applied:')
+    logger.info('  Fold train (real) : {}'.format(len(real_train_idx)))
+    logger.info('  Fold val          : {}'.format(len(fold_val_idx)))
+
 # instantiate model according to class number
 model = BertClassifier(pretrained_model=bert_init, nb_class=nb_class)
 
 # transform one-hot label to class ID for pytorch computation
 y = th.LongTensor((y_train + y_val +y_test).argmax(axis=1))
 label = {}
-label['train'], label['val'], label['test'] = y[:nb_train], y[nb_train:nb_train+nb_val], y[-nb_test:]
+
+if kfold_mode:
+    train_node_idx = th.where(th.BoolTensor(train_mask))[0]
+    val_node_idx   = th.where(th.BoolTensor(val_mask))[0]
+    label['train'] = y[train_node_idx]
+    label['val']   = y[val_node_idx]
+    # test is unused in finetune_bert.py but kept for consistency
+    test_node_idx  = th.where(th.BoolTensor(test_mask))[0]
+    label['test']  = y[test_node_idx]
+else:
+    label['train'], label['val'], label['test'] = y[:nb_train], y[nb_train:nb_train+nb_val], y[-nb_test:]
 
 # load documents and compute input encodings
 corpus_file = './data/corpus/'+dataset+'_shuffle.txt'
@@ -97,8 +147,18 @@ input_ids, attention_mask = {}, {}
 input_ids_, attention_mask_ = encode_input(text, model.tokenizer)
 
 # create train/test/val datasets and dataloaders
-input_ids['train'], input_ids['val'], input_ids['test'] =  input_ids_[:nb_train], input_ids_[nb_train:nb_train+nb_val], input_ids_[-nb_test:]
-attention_mask['train'], attention_mask['val'], attention_mask['test'] =  attention_mask_[:nb_train], attention_mask_[nb_train:nb_train+nb_val], attention_mask_[-nb_test:]
+if kfold_mode:
+    input_ids['train']      = input_ids_[train_node_idx]
+    input_ids['val']        = input_ids_[val_node_idx]
+    input_ids['test']       = input_ids_[test_node_idx]
+    attention_mask['train'] = attention_mask_[train_node_idx]
+    attention_mask['val']   = attention_mask_[val_node_idx]
+    attention_mask['test']  = attention_mask_[test_node_idx]
+else:
+    input_ids['train'], input_ids['val'], input_ids['test'] = \
+        input_ids_[:nb_train], input_ids_[nb_train:nb_train+nb_val], input_ids_[-nb_test:]
+    attention_mask['train'], attention_mask['val'], attention_mask['test'] = \
+        attention_mask_[:nb_train], attention_mask_[nb_train:nb_train+nb_val], attention_mask_[-nb_test:]
 
 datasets = {}
 loader = {}
@@ -161,18 +221,18 @@ for n, f in metrics.items():
 def log_training_results(trainer):
     evaluator.run(loader['train'])
     metrics = evaluator.state.metrics
-    train_acc, train_nll = metrics["acc"], metrics["nll"]
+    train_acc, train_nll, train_f1 = metrics["acc"], metrics["nll"], metrics["f1_weighted"]
     evaluator.run(loader['val'])
     metrics = evaluator.state.metrics
-    val_acc, val_nll = metrics["acc"], metrics["nll"]
+    val_acc, val_nll, val_f1 = metrics["acc"], metrics["nll"], metrics["f1_weighted"]
     evaluator.run(loader['test'])
     metrics = evaluator.state.metrics
-    test_acc, test_nll = metrics["acc"], metrics["nll"]
+    test_acc, test_nll, test_f1 = metrics["acc"], metrics["nll"], metrics["f1_weighted"]
     logger.info(
-        "\rEpoch: {}  Train acc: {:.4f} loss: {:.4f}  Val acc: {:.4f} loss: {:.4f}  Test acc: {:.4f} loss: {:.4f}"
-        .format(trainer.state.epoch, train_acc, train_nll, val_acc, val_nll, test_acc, test_nll)
+        "\rEpoch: {}  Train f1: {:.4f} loss: {:.4f}  Val f1: {:.4f} loss: {:.4f}  Test f1: {:.4f} loss: {:.4f}"
+        .format(trainer.state.epoch, train_f1, train_nll, val_f1, val_nll, test_f1, test_nll)
     )
-    if val_acc > log_training_results.best_val_acc:
+    if val_f1 > log_training_results.best_val_acc:
         logger.info("New checkpoint")
         th.save(
             {
@@ -185,9 +245,9 @@ def log_training_results(trainer):
                 ckpt_dir, 'checkpoint.pth'
             )
         )
-        log_training_results.best_val_acc = val_acc
+        log_training_results.best_val_f1 = val_f1
     scheduler.step()
 
         
-log_training_results.best_val_acc = 0
+log_training_results.best_val_f1 = 0
 trainer.run(loader['train'], max_epochs=nb_epochs)
