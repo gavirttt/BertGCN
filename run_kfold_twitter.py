@@ -171,6 +171,33 @@ def _build_corpus_to_node_map(data_dir: str, dataset: str) -> dict:
                     corpus_to_node[orig_idx] = node_idx + vocab_size
     return corpus_to_node
 
+def _log_class_distribution(indices, label_df, split_name, logger=None):
+    """
+    Log class distribution for a set of indices.
+    
+    Args:
+        indices: List of document indices (original corpus indices, not graph node indices)
+        label_df: DataFrame with 'label' column and index access via .loc
+        split_name: String name for this split (e.g., 'Train', 'Val', 'Test')
+        logger: Optional logger function (defaults to print)
+    """
+    labels = label_df.loc[indices, 'label'] if isinstance(indices, list) else label_df.iloc[indices]['label']
+    label_counts = labels.value_counts()
+    total = len(indices)
+    
+    output = [f"\n{split_name} Set Class Distribution (n={total}):"]
+    for label, count in label_counts.items():
+        pct = (count / total) * 100
+        output.append(f"  {label:12s}: {count:6d} ({pct:5.2f}%)")
+    
+    output_str = '\n'.join(output)
+    if logger:
+        logger(output_str)
+    else:
+        print(output_str)
+    
+    return label_counts
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Per-seed CV run
 # ─────────────────────────────────────────────────────────────────────────────
@@ -218,6 +245,41 @@ def run_kfold(
                   f'train={len(train_doc_idx)}  test={len(test_doc_idx)}')
 
             idx_set = df.set_index('doc_index')
+
+            # === CLASS DISTRIBUTION LOGGING ===
+            print(f'\n{"="*60}')
+            print(f'  CLASS DISTRIBUTION FOR FOLD {fold_id + 1}/{k}')
+            print(f'{"="*60}')
+            
+            # Log full fold train set (pre-validation split)
+            _log_class_distribution(train_doc_idx, idx_set, "Full Train (pre-val)")
+            print()
+            
+            # Create val split from train_doc_idx
+            fold_train_labels = [idx_set.loc[i, 'label'] for i in train_doc_idx]
+            from sklearn.model_selection import StratifiedShuffleSplit
+            sss = StratifiedShuffleSplit(n_splits=1, test_size=0.1, random_state=seed)
+            tr_sub, val_sub = next(sss.split(train_doc_idx, fold_train_labels))
+            real_train_idx = [train_doc_idx[i] for i in tr_sub]
+            fold_val_idx   = [train_doc_idx[i] for i in val_sub]
+            
+            # Log actual train (post-val) and validation sets
+            _log_class_distribution(real_train_idx, idx_set, "Real Train (post-val)")
+            _log_class_distribution(fold_val_idx, idx_set, "Validation")
+            _log_class_distribution(test_doc_idx, idx_set, "Test")
+            
+            # Log class imbalance ratios
+            train_counts = idx_set.loc[real_train_idx, 'label'].value_counts()
+            val_counts = idx_set.loc[fold_val_idx, 'label'].value_counts()
+            test_counts = idx_set.loc[test_doc_idx, 'label'].value_counts()
+            
+            print(f"\n  Imbalance Ratios (max/min):")
+            print(f"    Train: {train_counts.max() / train_counts.min():.2f}")
+            print(f"    Val:   {val_counts.max() / val_counts.min():.2f}")
+            print(f"    Test:  {test_counts.max() / test_counts.min():.2f}")
+            print(f'{"="*60}\n')
+            # === END CLASS DISTRIBUTION LOGGING ===
+
             print('  Train labels:', dict(idx_set.loc[train_doc_idx, 'label'].value_counts()))
             print('  Test  labels:', dict(idx_set.loc[test_doc_idx,  'label'].value_counts()))
 
@@ -256,6 +318,7 @@ def run_kfold(
                 '--train_indices', fold_bert_train_file,
                 '--checkpoint_dir', bert_ckpt_dir,
                 '--nb_epochs', str(10),
+                '--bert_lr', '2e-5'
             ]
             _run(cmd_finetune, f'Finetune BERT — fold {fold_id + 1}/{k}')
             
