@@ -159,7 +159,6 @@ if [ ${#M_VALUES_NO_CONV[@]} -gt 0 ]; then
             --nb_epochs $NB_EPOCHS \
             --device $DEVICE \
             --bert_init "$BERT_INIT" \
-            --no_keep_conversations \
             --summary_file "$SUMMARY_FILE"
         
         echo "✓ Completed m=$M (no conversation edges) -> $SUMMARY_FILE"
