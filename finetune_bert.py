@@ -122,17 +122,6 @@ model = BertClassifier(pretrained_model=bert_init, nb_class=nb_class)
 y = th.LongTensor((y_train + y_val +y_test).argmax(axis=1))
 label = {}
 
-if kfold_mode:
-    train_node_idx = th.where(th.BoolTensor(train_mask))[0]
-    val_node_idx   = th.where(th.BoolTensor(val_mask))[0]
-    label['train'] = y[train_node_idx]
-    label['val']   = y[val_node_idx]
-    # test is unused in finetune_bert.py but kept for consistency
-    test_node_idx  = th.where(th.BoolTensor(test_mask))[0]
-    label['test']  = y[test_node_idx]
-else:
-    label['train'], label['val'], label['test'] = y[:nb_train], y[nb_train:nb_train+nb_val], y[-nb_test:]
-
 # load documents and compute input encodings
 corpus_file = './data/corpus/'+dataset+'_shuffle.txt'
 with open(corpus_file, 'r') as f:
@@ -150,17 +139,26 @@ input_ids_, attention_mask_ = encode_input(text, model.tokenizer)
 
 # create train/test/val datasets and dataloaders
 if kfold_mode:
-    input_ids['train']      = input_ids_[train_node_idx]
-    input_ids['val']        = input_ids_[val_node_idx]
-    input_ids['test']       = input_ids_[test_node_idx]
-    attention_mask['train'] = attention_mask_[train_node_idx]
-    attention_mask['val']   = attention_mask_[val_node_idx]
-    attention_mask['test']  = attention_mask_[test_node_idx]
+    real_train_corpus_idx = th.LongTensor(real_train_idx)
+    fold_val_corpus_idx   = th.LongTensor(fold_val_idx)
+
+    input_ids['train']      = input_ids_[real_train_corpus_idx]
+    input_ids['val']        = input_ids_[fold_val_corpus_idx]
+    input_ids['test']       = input_ids_[-nb_test:]
+    attention_mask['train'] = attention_mask_[real_train_corpus_idx]
+    attention_mask['val']   = attention_mask_[fold_val_corpus_idx]
+    attention_mask['test']  = attention_mask_[-nb_test:]
+
+    label['train'] = y[real_train_corpus_idx]
+    label['val']   = y[fold_val_corpus_idx]
+    label['test']  = y[-nb_test:]
 else:
     input_ids['train'], input_ids['val'], input_ids['test'] = \
         input_ids_[:nb_train], input_ids_[nb_train:nb_train+nb_val], input_ids_[-nb_test:]
     attention_mask['train'], attention_mask['val'], attention_mask['test'] = \
         attention_mask_[:nb_train], attention_mask_[nb_train:nb_train+nb_val], attention_mask_[-nb_test:]
+
+    label['train'], label['val'], label['test'] = y[:nb_train], y[nb_train:nb_train+nb_val], y[-nb_test:]
 
 datasets = {}
 loader = {}
