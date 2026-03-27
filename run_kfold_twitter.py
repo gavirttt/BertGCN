@@ -254,7 +254,7 @@ def run_kfold(
                 '--bert_init', bert_init,
                 '--train_indices', fold_bert_train_file,
                 '--checkpoint_dir', os.path.join(tmpdir, f'bert_ckpt_fold{fold_id}'),
-                '--nb_epochs', 10,
+                '--nb_epochs', str(10),
             ]
             _run(cmd_finetune, f'Finetune BERT — fold {fold_id + 1}/{k}')
             
