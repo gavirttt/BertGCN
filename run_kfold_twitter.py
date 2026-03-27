@@ -266,7 +266,7 @@ def run_kfold(
             # Create val split from train_doc_idx
             fold_train_labels = [idx_set.loc[i, 'label'] for i in train_doc_idx]
             from sklearn.model_selection import StratifiedShuffleSplit
-            sss = StratifiedShuffleSplit(n_splits=1, test_size=0.1, random_state=seed)
+            sss = StratifiedShuffleSplit(n_splits=1, test_size=0.15, random_state=seed)
             tr_sub, val_sub = next(sss.split(train_doc_idx, fold_train_labels))
             real_train_idx = [train_doc_idx[i] for i in tr_sub]
             fold_val_idx   = [train_doc_idx[i] for i in val_sub]
