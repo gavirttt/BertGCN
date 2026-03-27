@@ -5,7 +5,7 @@ from utils import *
 import dgl
 import torch.utils.data as Data
 from ignite.engine import Events, create_supervised_evaluator, create_supervised_trainer, Engine
-from ignite.metrics import Accuracy, Loss, F1
+from ignite.metrics import Accuracy, Loss
 import numpy as np
 import os
 from datetime import datetime
@@ -56,6 +56,7 @@ fh = logging.FileHandler(filename=os.path.join(ckpt_dir, 'training.log'), mode='
 fh.setFormatter(logging.Formatter('%(message)s'))
 fh.setLevel(logging.INFO)
 logger = logging.getLogger('training logger')
+logger.handlers.clear()
 logger.addHandler(sh)
 logger.addHandler(fh)
 logger.setLevel(logging.INFO)
@@ -209,31 +210,63 @@ def test_step(engine, batch):
 
 
 evaluator = Engine(test_step)
-metrics={
+metrics = {
     'acc': Accuracy(),
     'nll': Loss(th.nn.CrossEntropyLoss()),
-    'f1_weighted': F1(average='weighted')
 }
 for n, f in metrics.items():
     f.attach(evaluator, n)
 
 
+def _compute_f1_on_loader(split_loader):
+    """Compute weighted F1 over a DataLoader split using sklearn."""
+    all_preds, all_labels = [], []
+    with th.no_grad():
+        model.eval()
+        model.to(gpu)
+        for batch in split_loader:
+            (input_ids_, attn_mask_, labels_) = [x.to(gpu) for x in batch]
+            preds = model(input_ids_, attn_mask_).argmax(axis=1).cpu().numpy()
+            all_preds.append(preds)
+            all_labels.append(labels_.cpu().numpy())
+    from sklearn.metrics import f1_score as _f1
+    return _f1(
+        np.concatenate(all_labels),
+        np.concatenate(all_preds),
+        average='weighted',
+        zero_division=0,
+    )
+
+
 @trainer.on(Events.EPOCH_COMPLETED)
 def log_training_results(trainer):
     evaluator.run(loader['train'])
-    metrics = evaluator.state.metrics
-    train_acc, train_nll, train_f1 = metrics["acc"], metrics["nll"], metrics["f1_weighted"]
+    train_metrics = evaluator.state.metrics
+    train_acc, train_nll = train_metrics["acc"], train_metrics["nll"]
+    train_f1 = _compute_f1_on_loader(loader['train'])
+
     evaluator.run(loader['val'])
-    metrics = evaluator.state.metrics
-    val_acc, val_nll, val_f1 = metrics["acc"], metrics["nll"], metrics["f1_weighted"]
+    val_metrics = evaluator.state.metrics
+    val_acc, val_nll = val_metrics["acc"], val_metrics["nll"]
+    val_f1 = _compute_f1_on_loader(loader['val'])
+
     evaluator.run(loader['test'])
-    metrics = evaluator.state.metrics
-    test_acc, test_nll, test_f1 = metrics["acc"], metrics["nll"], metrics["f1_weighted"]
+    test_metrics = evaluator.state.metrics
+    test_acc, test_nll = test_metrics["acc"], test_metrics["nll"]
+    test_f1 = _compute_f1_on_loader(loader['test'])
+
     logger.info(
-        "\rEpoch: {}  Train f1: {:.4f} loss: {:.4f}  Val f1: {:.4f} loss: {:.4f}  Test f1: {:.4f} loss: {:.4f}"
-        .format(trainer.state.epoch, train_f1, train_nll, val_f1, val_nll, test_f1, test_nll)
+        "\rEpoch: {}  Train acc: {:.4f} f1: {:.4f} loss: {:.4f}  "
+        "Val acc: {:.4f} f1: {:.4f} loss: {:.4f}  "
+        "Test acc: {:.4f} f1: {:.4f} loss: {:.4f}"
+        .format(
+            trainer.state.epoch,
+            train_acc, train_f1, train_nll,
+            val_acc,   val_f1,   val_nll,
+            test_acc,  test_f1,  test_nll,
+        )
     )
-    if val_f1 > log_training_results.best_val_acc:
+    if val_f1 > log_training_results.best_val_f1:
         logger.info("New checkpoint")
         th.save(
             {

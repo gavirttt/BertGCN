@@ -5,7 +5,7 @@ from utils import *
 import dgl
 import torch.utils.data as Data
 from ignite.engine import Events, create_supervised_evaluator, create_supervised_trainer, Engine
-from ignite.metrics import Accuracy, Loss, F1
+from ignite.metrics import Accuracy, Loss
 from sklearn.metrics import accuracy_score, f1_score, classification_report, confusion_matrix
 import numpy as np
 import os
@@ -117,6 +117,7 @@ fh = logging.FileHandler(filename=os.path.join(ckpt_dir, 'training.log'), mode='
 fh.setFormatter(logging.Formatter('%(message)s'))
 fh.setLevel(logging.INFO)
 logger = logging.getLogger('training logger')
+logger.handlers.clear()
 logger.addHandler(sh)
 logger.addHandler(fh)
 logger.setLevel(logging.INFO)
@@ -443,33 +444,65 @@ def test_step(engine, batch):
 
 
 evaluator = Engine(test_step)
-metrics={
+metrics = {
     'acc': Accuracy(),
     'nll': Loss(th.nn.NLLLoss()),
-    'f1_weighted': F1(average='weighted')
 }
 for n, f in metrics.items():
     f.attach(evaluator, n)
 
 
+def _compute_f1_on_loader(loader):
+    """Run model over a DataLoader and return weighted F1 via sklearn."""
+    all_preds, all_labels = [], []
+    with th.no_grad():
+        model.eval()
+        model.to(gpu)
+        g.to(gpu)
+        for batch in loader:
+            (idx,) = [x.to(gpu) for x in batch]
+            y_pred = model(g, idx).argmax(axis=1).cpu().numpy()
+            y_true = g.ndata['label'][idx].cpu().numpy()
+            all_preds.append(y_pred)
+            all_labels.append(y_true)
+    return f1_score(
+        np.concatenate(all_labels),
+        np.concatenate(all_preds),
+        average='weighted',
+        zero_division=0,
+    )
+
+
 @trainer.on(Events.EPOCH_COMPLETED)
 def log_training_results(trainer):
     evaluator.run(idx_loader_train)
-    metrics = evaluator.state.metrics
-    train_acc, train_nll, train_f1 = metrics["acc"], metrics["nll"], metrics["f1_weighted"]
+    train_metrics = evaluator.state.metrics
+    train_acc, train_nll = train_metrics["acc"], train_metrics["nll"]
+    train_f1 = _compute_f1_on_loader(idx_loader_train)
+
     evaluator.run(idx_loader_val)
-    metrics = evaluator.state.metrics
-    val_acc, val_nll, val_f1 = metrics["acc"], metrics["nll"], metrics["f1_weighted"]
+    val_metrics = evaluator.state.metrics
+    val_acc, val_nll = val_metrics["acc"], val_metrics["nll"]
+    val_f1 = _compute_f1_on_loader(idx_loader_val)
+
     evaluator.run(idx_loader_test)
-    metrics = evaluator.state.metrics
-    test_acc, test_nll, test_f1 = metrics["acc"], metrics["nll"], metrics["f1_weighted"]
-    
+    test_metrics = evaluator.state.metrics
+    test_acc, test_nll = test_metrics["acc"], test_metrics["nll"]
+    test_f1 = _compute_f1_on_loader(idx_loader_test)
+
     logger.info(
-        "\rEpoch: {}  Train f1: {:.4f} loss: {:.4f}  Val f1: {:.4f} loss: {:.4f}  Test f1: {:.4f} loss: {:.4f}"
-        .format(trainer.state.epoch, train_f1, train_nll, val_f1, val_nll, test_f1, test_nll)
+        "\rEpoch: {}  Train acc: {:.4f} f1: {:.4f} loss: {:.4f}  "
+        "Val acc: {:.4f} f1: {:.4f} loss: {:.4f}  "
+        "Test acc: {:.4f} f1: {:.4f} loss: {:.4f}"
+        .format(
+            trainer.state.epoch,
+            train_acc, train_f1, train_nll,
+            val_acc,   val_f1,   val_nll,
+            test_acc,  test_f1,  test_nll,
+        )
     )
-    
-    # Early stopping logic
+
+    # Early stopping / checkpoint logic — tracked by val F1
     if val_f1 > log_training_results.best_val_f1:
         logger.info("New checkpoint")
         th.save(
@@ -495,7 +528,7 @@ def log_training_results(trainer):
             trainer.terminate()
 
 
-log_training_results.best_val_acc = 0
+log_training_results.best_val_f1 = 0
 log_training_results.patience_counter = 0
 g = update_feature()
 
