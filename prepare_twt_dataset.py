@@ -165,21 +165,21 @@ def prepare_twitter_dataset(
     print(f"  Total conversations: {len(conversation_map)}")
     print(f"  Conversations with multiple tweets: {sum(1 for docs in conversation_map.values() if len(docs) > 1)}")
     
-    # Create metadata file with statistics
-    metadata = {
-        'dataset_name': dataset_name,
-        'total_documents': int(len(df_all)),
-        'train_size': int(len(df_train)),
-        'test_size': int(len(df_test)),
-        'test_split_ratio': test_split_ratio,
-        'sentiment_labels': sentiment_labels,
-        'num_conversations': int(len(conversation_map)),
-        'seed': int(seed),
-        'note': 'Graph builder creates 90/10 validation split from training data internally'
-    }
+    # # Create metadata file with statistics
+    # metadata = {
+    #     'dataset_name': dataset_name,
+    #     'total_documents': int(len(df_all)),
+    #     'train_size': int(len(df_train)),
+    #     'test_size': int(len(df_test)),
+    #     'test_split_ratio': test_split_ratio,
+    #     'sentiment_labels': sentiment_labels,
+    #     'num_conversations': int(len(conversation_map)),
+    #     'seed': int(seed),
+    #     'note': 'Graph builder creates 90/10 validation split from training data internally'
+    # }
     
-    with open(f'{output_dir}/{dataset_name}_metadata.json', 'w', encoding='utf-8') as f:
-        json.dump(metadata, f, indent=2)
+    # with open(f'{output_dir}/{dataset_name}_metadata.json', 'w', encoding='utf-8') as f:
+    #     json.dump(metadata, f, indent=2)
     
     print(f"\n✓ Dataset preparation complete!")
     print(f"\nNext steps:")
@@ -187,7 +187,7 @@ def prepare_twitter_dataset(
     print(f"  2. Train model: python3 train_bert_gcn.py --dataset {dataset_name} --seed {seed}")
     print(f"  3. Or run k-fold CV: python3 run_kfold_twitter.py --seeds {seed} --k 5")
     
-    return metadata
+    # return metadata
 
 
 if __name__ == '__main__':
