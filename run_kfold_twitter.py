@@ -247,13 +247,14 @@ def run_kfold(
             _write_index_file(train_doc_idx, fold_bert_train_file)
             
             # Finetune BERT on this fold's train set only
-            fold_bert_ckpt = os.path.join(tmpdir, f'bert_fold{fold_id}.pth')
+            bert_ckpt_dir = os.path.join(tmpdir, f'bert_ckpt_fold{fold_id}')
+            fold_bert_ckpt = os.path.join(bert_ckpt_dir, 'checkpoint.pth')
             cmd_finetune = [
                 sys.executable, 'finetune_bert.py',
                 '--dataset', DATASET,
                 '--bert_init', bert_init,
                 '--train_indices', fold_bert_train_file,
-                '--checkpoint_dir', os.path.join(tmpdir, f'bert_ckpt_fold{fold_id}'),
+                '--checkpoint_dir', bert_ckpt_dir,
                 '--nb_epochs', str(10),
             ]
             _run(cmd_finetune, f'Finetune BERT — fold {fold_id + 1}/{k}')
