@@ -165,7 +165,10 @@ output_tag    = f'{sentiment_tag}_{month_tag}'
 print(f"\nOutput tag: {output_tag}")
 print(f"Total tweets for analysis: {len(df)}")
 
-texts = df['text'].fillna('').tolist()
+# Use cleaned_text for both BERT and LDA
+texts_cleaned = df['cleaned_text'].fillna('').tolist() \
+    if 'cleaned_text' in df.columns \
+    else df['text'].fillna('').tolist()  # fallback if cleaned_text missing
 
 # ── Load BERT (pretrained, no checkpoint needed) ──────────────────────────────
 print(f"\nLoading BERT: {args.bert_init}")
@@ -179,9 +182,9 @@ print("Using pretrained model as-is (no fine-tuned checkpoint)")
 print("\nExtracting BERT embeddings...")
 all_embeddings = []
 
-for i in tqdm(range(0, len(texts), args.batch_size),
+for i in tqdm(range(0, len(texts_cleaned), args.batch_size),
               desc='BERT embeddings', unit='batch'):
-    batch = texts[i:i + args.batch_size]
+    batch = texts_cleaned[i:i + args.batch_size]
     encoded = tokenizer(
         batch,
         max_length=args.max_length,
@@ -203,15 +206,41 @@ print(f"BERT embeddings shape: {bert_embeddings.shape}")
 print("\nFitting LDA...")
 
 tagalog_stopwords = [
-    'ng', 'sa', 'ang', 'na', 'mga', 'at', 'ay', 'ni', 'si',
-    'ko', 'mo', 'ka', 'po', 'naman', 'lang', 'din', 'rin',
-    'yung', 'ung', 'sya', 'siya', 'niya', 'nila', 'namin',
-    'kami', 'kayo', 'sila', 'ako', 'ikaw', 'ito', 'iyon',
-    'dito', 'doon', 'para', 'pero', 'kasi', 'kaya', 'kung',
-    'pag', 'kapag', 'dahil', 'nang', 'hindi', 'wala', 'may',
-    'mga', 'yun', 'yan', 'yon', 'ba', 'nga', 'eh', 'oh',
-    'talaga', 'ganun', 'ganon', 'parang', 'daw', 'raw', 'po', 
-    'opo', 'oo'
+    'ng', 'sa', 'ang', 'na', 'ni', 'si', 
+    'mga', 'at', 'ay', 'ko', 'mo', 'ka', 
+    'po', 'naman', 'lang', 'din', 'rin', 
+    'yung', 'ung', 'sya', 'siya', 'niya', 
+    'nila', 'namin', 'kami', 'kayo', 'sila', 
+    'ako', 'ikaw', 'ito', 'iyon', 'dito', 
+    'doon', 'para', 'pero', 'kasi', 'kaya', 
+    'kung', 'pag', 'kapag', 'dahil', 'nang', 
+    'hindi', 'wala', 'may', 'yun', 'yan', 
+    'yon', 'ba', 'nga', 'eh', 'oh', 'talaga', 
+    'ganun', 'ganon', 'parang', 'daw', 'raw', 
+    'opo', 'oo', 'umano', 'natin', 'ayon', 
+    'nya', 'ating', 'mas', 'atin', 'niyo', 
+    'ninyo', 'akin', 'amin', 'ano', 'nito', 
+    'gayunman', 'inyo', 'iyo', 'kanya', 
+    'kaniya', 'kanila', 'kanino', 'mismo', 
+    'narito', 'nandito', 'rito', 'ng', 'sang', 
+    'ang', 'nang', 'mga', 'at', 'ay', 'kong', 
+    'mong', 'kang', 'pong', 'namang', 'lang', 
+    'ding', 'ring', 'yung', 'ung', 'syang', 
+    'siyang', 'niyang', 'nilang', 'naming', 
+    'kaming', 'kayong', 'silang', 'akong', 
+    'ikaw', 'itong', 'iyong', 'ditong', 'doong', 
+    'parang', 'pero', 'kasing', 'kayang', 
+    'kung', 'pag', 'kapag', 'dahil', 'nang', 
+    'hinding', 'walang', 'may', 'yung', 'yang', 
+    'yong', 'bang', 'ngang', 'eh', 'oh', 
+    'talagang', 'ganung', 'ganong', 'parang', 
+    'daw', 'raw', 'opo', 'oo', 'umanong', 
+    'nating', 'ayong', 'nyang', 'ating', 'mas', 
+    'ating', 'niyong', 'ninyong', 'aking', 'aming', 
+    'anong', 'nitong', 'gayunmang', 'inyong', 
+    'iyong', 'kanyang', 'kaniyang', 'kanilang', 
+    'kaninong', 'mismong', 'naritong', 'nanditong', 
+    'ritong', 'nyong', 'saan', 'saang'
 ]
 
 english_stopwords = list(CountVectorizer(stop_words='english').get_stop_words())
@@ -223,7 +252,7 @@ vectorizer = CountVectorizer(
     max_df=0.95,
     stop_words=all_stopwords
 )
-doc_term_matrix = vectorizer.fit_transform(texts)
+doc_term_matrix = vectorizer.fit_transform(texts_cleaned)
 
 lda = LatentDirichletAllocation(
     n_components=args.n_topics,
