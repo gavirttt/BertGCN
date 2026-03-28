@@ -24,6 +24,7 @@
 set -e  # Exit immediately on any error
 
 # ── Configurable parameters ──────────────────────────────────────────────────
+PYTHON="/kaggle/working/venv/bin/python"
 SEED=42
 K=10
 NB_EPOCHS=5
@@ -131,13 +132,24 @@ if [ ${#M_VALUES_NO_CONV[@]} -eq 0 ] && [ ${#M_VALUES_WITH_CONV[@]} -eq 0 ]; the
 fi
 
 # =============================================================================
+# Prepare dataset (only needs to run once)
+# =============================================================================
+section "STEP 1 — Prepare Twitter Dataset"
+
+step "Running prepare_twt_dataset.py"
+$PYTHON prepare_twt_dataset.py \
+    --csv "$LABELED_CSV"
+
+echo "✓ Dataset prepared"
+
+# =============================================================================
 # OPTION A: Build graph No conversation edges
 # =============================================================================
 if [ ${#M_VALUES_NO_CONV[@]} -gt 0 ]; then
     section "STEP 5 — Build Graph (No Conversation Edges)"
     
     step "Running build_graph.py (No conversation edges)"
-    /kaggle/working/venv/bin/python build_graph.py twitter --seed $SEED --no_conversation_edges
+    $PYTHON build_graph.py twitter --seed $SEED --no_conversation_edges
     
     echo "✓ Graph built (No conversation edges)"
     
@@ -152,7 +164,7 @@ if [ ${#M_VALUES_NO_CONV[@]} -gt 0 ]; then
         # Create summary filename with m value
         SUMMARY_FILE="kfold_no_conv_edges_m${M}_summary.csv"
         
-        /kaggle/working/venv/bin/python run_kfold_twitter.py \
+        $PYTHON run_kfold_twitter.py \
             --k $K \
             --seed $SEED \
             --m $M \
@@ -175,7 +187,7 @@ if [ ${#M_VALUES_WITH_CONV[@]} -gt 0 ]; then
     section "Build Graph (With Conversation Edges)"
     
     step "Running build_graph.py (with conversation edges)"
-    /kaggle/working/venv/bin/python build_graph.py twitter --seed $SEED
+    $PYTHON build_graph.py twitter --seed $SEED
     
     echo "✓ Graph built (with conversation edges)"
     
@@ -190,7 +202,7 @@ if [ ${#M_VALUES_WITH_CONV[@]} -gt 0 ]; then
         # Create summary filename with m value
         SUMMARY_FILE="kfold_with_conv_edges_m${M}_summary.csv"
         
-        /kaggle/working/venv/bin/python run_kfold_twitter.py \
+        $PYTHON run_kfold_twitter.py \
             --k $K \
             --seed $SEED \
             --m $M \
