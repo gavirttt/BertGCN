@@ -14,7 +14,7 @@ checkpoint/*
 ,/*
 annotator_stats/*
 statistical_testing/*
-topic_modeling/*
+topic_modeling/results*
 *.ipynb
 bert_gcn
 bert_gcn_ind
