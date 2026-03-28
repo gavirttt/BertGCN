@@ -46,7 +46,7 @@ pip install torch==2.2.1+cu118 torchaudio==2.2.1+cu118 torchvision==0.17.1+cu118
 
 ```bash
 pip install transformers datasets nltk scipy pytorch-ignite scikit-learn pydantic tqdm
-pip install emoji>=2.8.0 html5lib>=1.1
+pip install emoji>=2.8.0 html5lib>=1.1 wordcloud umap-learn==0.5.4
 ```
 
 **4. Install DGL (CUDA 11.8):**
