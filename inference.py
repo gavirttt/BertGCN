@@ -1,165 +1,92 @@
+from prepare_twt_dataset import clean_text
 import torch as th
 import numpy as np
 import pandas as pd
-import argparse
-import os
-from model import BertGCN, BertGAT
-from utils import load_corpus, normalize_adj
-import scipy.sparse as sp
-import dgl
-import torch.utils.data as Data
+from model import BertClassifier
 
-parser = argparse.ArgumentParser()
-parser.add_argument('--checkpoint', type=str, required=True)
-parser.add_argument('--bert_init', type=str, default='jcblaise/roberta-tagalog-base')
-parser.add_argument('--gcn_model', type=str, default='gcn', choices=['gcn', 'gat'])
-parser.add_argument('--m', type=float, default=0.7)
-parser.add_argument('--dataset', type=str, default='twitter')
-parser.add_argument('--max_length', type=int, default=128)
-parser.add_argument('--batch_size', type=int, default=32)
-parser.add_argument('--device', type=str, default='cuda', choices=['cuda', 'cpu'])
-parser.add_argument('--output', type=str, default='predictions.csv')
-args = parser.parse_args()
-
-device = th.device('cuda:0') if args.device == 'cuda' and th.cuda.is_available() else th.device('cpu')
-print(f"Using device: {device}")
-
-# ── Load graph and corpus ─────────────────────────────────────────────────────
-adj, features, y_train, y_val, y_test, train_mask, val_mask, test_mask, train_size, test_size = \
-    load_corpus(args.dataset)
-
-nb_node = features.shape[0]
-nb_train = train_mask.sum()
-nb_val   = val_mask.sum()
-nb_test  = test_mask.sum()
-nb_word  = nb_node - nb_train - nb_val - nb_test
-nb_class = y_train.shape[1]
-
-print(f"Graph nodes: {nb_node} | Train: {nb_train} | Val: {nb_val} | Test (unlabeled): {nb_test} | Word: {nb_word}")
-
-# ── Build model ───────────────────────────────────────────────────────────────
-if args.gcn_model == 'gcn':
-    model = BertGCN(
-        nb_class=nb_class,
-        pretrained_model=args.bert_init,
-        m=args.m,
-        gcn_layers=2,
-        n_hidden=200,
-        dropout=0.5
-    )
-else:
-    model = BertGAT(
-        nb_class=nb_class,
-        pretrained_model=args.bert_init,
-        m=args.m,
-        gcn_layers=2,
-        n_hidden=32,
-        dropout=0.5
-    )
-
-# ── Load checkpoint ───────────────────────────────────────────────────────────
-ckpt = th.load(args.checkpoint, map_location=device)
-model.bert_model.load_state_dict(ckpt['bert_model'])
-model.classifier.load_state_dict(ckpt['classifier'])
-model.gcn.load_state_dict(ckpt['gcn'])
-print(f"Loaded checkpoint from epoch {ckpt['epoch']}")
-
-# ── Encode corpus text ────────────────────────────────────────────────────────
-corpus_file = f'./data/corpus/{args.dataset}_shuffle.txt'
-with open(corpus_file, 'r', encoding='utf-8') as f:
-    text = f.read().replace('\\', '').split('\n')
-
-def encode_input(text, tokenizer):
-    inp = tokenizer(text, max_length=args.max_length, truncation=True,
-                    padding='max_length', return_tensors='pt')
-    return inp.input_ids, inp.attention_mask
-
-input_ids, attention_mask = encode_input(text, model.tokenizer)
-
-# Insert zero padding for word nodes
-# Layout: [train_docs | val_docs | <word_nodes_inserted_here> | test_docs]
-# text file has: train+val docs followed by test docs (no word rows)
-# so we split at -nb_test from the end
-input_ids = th.cat([
-    input_ids[:-nb_test],
-    th.zeros((nb_word, args.max_length), dtype=th.long),
-    input_ids[-nb_test:]
-])
-attention_mask = th.cat([
-    attention_mask[:-nb_test],
-    th.zeros((nb_word, args.max_length), dtype=th.long),
-    attention_mask[-nb_test:]
-])
-
-# ── Build DGL graph ───────────────────────────────────────────────────────────
-adj_norm = normalize_adj(adj + sp.eye(adj.shape[0]))
-g = dgl.from_scipy(adj_norm.astype('float32'), eweight_name='edge_weight')
-g.ndata['input_ids'] = input_ids
-g.ndata['attention_mask'] = attention_mask
-g.ndata['cls_feats'] = th.zeros((nb_node, model.feat_dim))
-
-# ── Warm up cls_feats with BERT ───────────────────────────────────────────────
-doc_mask = train_mask + val_mask + test_mask
-
-print("Computing BERT features for all document nodes...")
-model = model.to(device)
-model.eval()
-with th.no_grad():
-    loader = Data.DataLoader(
-        Data.TensorDataset(
-            g.ndata['input_ids'][doc_mask],
-            g.ndata['attention_mask'][doc_mask]
-        ),
-        batch_size=256
-    )
-    cls_list = []
-    for batch_input_ids, batch_attn in loader:
-        out = model.bert_model(
-            input_ids=batch_input_ids.to(device),
-            attention_mask=batch_attn.to(device)
-        )[0][:, 0]
-        cls_list.append(out.cpu())
-    # Write back to CPU graph before moving graph to device
-    g.ndata['cls_feats'][doc_mask] = th.cat(cls_list, dim=0)
-
-# ── Run inference on unlabeled test nodes ─────────────────────────────────────
-test_node_idx = th.where(th.BoolTensor(test_mask))[0]
-test_loader   = Data.DataLoader(
-    Data.TensorDataset(test_node_idx),
-    batch_size=args.batch_size
-)
-
-g = g.to(device)
-all_preds = []
-all_probs = []
-
-print("Running inference on unlabeled test nodes...")
-with th.no_grad():
-    for (idx,) in test_loader:
-        idx = idx.to(device)
-        logits = model(g, idx)        # log-softmax output
-        probs = th.exp(logits)       # back to probabilities
-        preds = probs.argmax(dim=1)
-        all_preds.append(preds.cpu().numpy())
-        all_probs.append(probs.cpu().numpy())
-
-all_preds = np.concatenate(all_preds)
-all_probs = np.concatenate(all_probs)
-
-# ── Map back to unlabeled CSV ─────────────────────────────────────────────────
+bert_init = 'dost-asti/RoBERTa-tl-sentiment-analysis'
+nb_class = 3
+batch_size = 128
 label_map = {0: 'positive', 1: 'negative', 2: 'neutral'}
 
-df_unlabeled = pd.read_csv('data/tweets_unlabeled_set.csv')
-df_unlabeled = df_unlabeled.dropna(subset=['text']).reset_index(drop=True)
+checkpoint_paths = [
+    'checkpoint/k=10/no-conv_m0.0/checkpoint/twitter_fold0_seed42_gcn_20260327_150430/checkpoint.pth',
+    'checkpoint/k=10/no-conv_m0.0/checkpoint/twitter_fold1_seed42_gcn_20260327_151805/checkpoint.pth',
+    'checkpoint/k=10/no-conv_m0.0/checkpoint/twitter_fold2_seed42_gcn_20260327_152911/checkpoint.pth',
+    'checkpoint/k=10/no-conv_m0.0/checkpoint/twitter_fold3_seed42_gcn_20260327_154129/checkpoint.pth',
+    'checkpoint/k=10/no-conv_m0.0/checkpoint/twitter_fold4_seed42_gcn_20260327_155348/checkpoint.pth',
+    'checkpoint/k=10/no-conv_m0.0/checkpoint/twitter_fold5_seed42_gcn_20260327_160345/checkpoint.pth',
+    'checkpoint/k=10/no-conv_m0.0/checkpoint/twitter_fold6_seed42_gcn_20260327_161709/checkpoint.pth',
+    'checkpoint/k=10/no-conv_m0.0/checkpoint/twitter_fold7_seed42_gcn_20260327_162929/checkpoint.pth',
+    'checkpoint/k=10/no-conv_m0.0/checkpoint/twitter_fold8_seed42_gcn_20260327_164304/checkpoint.pth',
+    'checkpoint/k=10/no-conv_m0.0/checkpoint/twitter_fold9_seed42_gcn_20260327_165853/checkpoint.pth',
+]
 
-assert len(df_unlabeled) == len(all_preds), \
-    f"Mismatch: {len(df_unlabeled)} unlabeled rows vs {len(all_preds)} predictions"
+# Load and clean unlabeled data
+df = pd.read_csv('data/tweets_unlabeled_set.csv')
+df['cleaned_text'] = df['text'].apply(clean_text)
+texts = df['cleaned_text'].tolist()
+print(f"Loaded {len(texts)} unlabeled tweets")
 
-df_unlabeled['predicted_label']    = [label_map[p] for p in all_preds]
-df_unlabeled['predicted_label_id'] = all_preds
-for i, cls in enumerate(['positive', 'negative', 'neutral']):
-    df_unlabeled[f'prob_{cls}'] = all_probs[:, i]
+# Tokenize once in batches
+def tokenize_in_batches(texts, tokenizer, max_length=128, batch_size=128):
+    all_input_ids = []
+    all_attention_masks = []
+    for i in range(0, len(texts), batch_size):
+        batch = texts[i:i+batch_size]
+        encoded = tokenizer(
+            batch,
+            max_length=max_length,
+            truncation=True,
+            padding='max_length',
+            return_tensors='pt'
+        )
+        all_input_ids.append(encoded['input_ids'])
+        all_attention_masks.append(encoded['attention_mask'])
+    return th.cat(all_input_ids, dim=0), th.cat(all_attention_masks, dim=0)
 
-df_unlabeled.to_csv(args.output, index=False)
-print(f"\n✓ Predictions saved to: {args.output}")
-print(f"\nPrediction distribution:\n{df_unlabeled['predicted_label'].value_counts()}")
+print("Tokenizing...")
+model_ref = BertClassifier(pretrained_model=bert_init, nb_class=nb_class)
+input_ids, attention_mask = tokenize_in_batches(texts, model_ref.tokenizer)
+del model_ref  # free memory
+
+# Run inference for each fold checkpoint
+all_probs = []
+
+for fold_idx, ckpt_path in enumerate(checkpoint_paths):
+    print(f"Running inference — fold {fold_idx + 1}/{len(checkpoint_paths)}")
+    
+    model = BertClassifier(pretrained_model=bert_init, nb_class=nb_class)
+    ckpt = th.load(ckpt_path, map_location='cpu')
+    model.bert_model.load_state_dict(ckpt['bert_model'])
+    model.classifier.load_state_dict(ckpt['classifier'])
+    model.eval()
+
+    fold_probs = []
+    with th.no_grad():
+        for i in range(0, len(texts), batch_size):
+            batch_input_ids = input_ids[i:i+batch_size]
+            batch_attention_mask = attention_mask[i:i+batch_size]
+            logits = model(batch_input_ids, batch_attention_mask)
+            probs = th.nn.Softmax(dim=1)(logits).cpu().numpy()
+            fold_probs.append(probs)
+    
+    fold_probs = np.concatenate(fold_probs, axis=0)
+    all_probs.append(fold_probs)
+    del model  # free memory after each fold
+
+# Ensemble: average probabilities across folds
+print("Ensembling predictions...")
+ensemble_probs = np.mean(all_probs, axis=0)  # shape: (n_docs, nb_class)
+preds = ensemble_probs.argmax(axis=1)
+
+# Save results
+df['predicted_sentiment'] = [label_map[p] for p in preds]
+df['prob_positive'] = ensemble_probs[:, 0]
+df['prob_negative'] = ensemble_probs[:, 1]
+df['prob_neutral']  = ensemble_probs[:, 2]
+
+df.to_csv('predictions.csv', index=False)
+print(f"Predictions saved to predictions.csv")
+print(f"\nPrediction distribution:")
+print(df['predicted_sentiment'].value_counts())
