@@ -166,8 +166,8 @@ print(f"\nOutput sub-directory: {args.output_dir}/{output_subdir}")
 print(f"Total tweets for analysis: {len(df)}")
  
 # Use cleaned_text for both BERT and LDA
-texts_cleaned = df['cleaned_text'].fillna('').tolist() \
-    if 'cleaned_text' in df.columns \
+texts_cleaned = df['cleaned_text2'].fillna('').tolist() \
+    if 'cleaned_text2' in df.columns \
     else df['text'].fillna('').tolist()  # fallback if cleaned_text missing
  
 # ── Load BERT (pretrained, no checkpoint needed) ──────────────────────────────
