@@ -44,7 +44,7 @@ parser.add_argument('--month', type=str, default=None,
 parser.add_argument('--batch_size', type=int, default=64)
 parser.add_argument('--max_length', type=int, default=128)
 parser.add_argument('--device', type=str, default='cuda')
-parser.add_argument('--output_dir', type=str, default=f'topic-modeling_pipeline/results_{datetime.now().strftime("%Y%m%d_%H%M%S")}')
+parser.add_argument('--output_dir', type=str, default=f'topic_modeling/results_{datetime.now().strftime("%Y%m%d_%H%M%S")}')
 args = parser.parse_args()
  
 os.makedirs(args.output_dir, exist_ok=True)
