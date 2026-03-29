@@ -372,7 +372,7 @@ def run_kfold(
                     print(f'    Fold {fold_id + 1} will proceed without a pretrained BERT checkpoint.')
 
             ckpt_dir = (
-                f'./checkpoint/finetuned/{DATASET}_fold{fold_id}_seed{seed}_{gcn_model}_'
+                f'./checkpoint/{DATASET}_fold{fold_id}_seed{seed}_{gcn_model}_'
                 f'{datetime.now().strftime("%Y%m%d_%H%M%S")}'
             )
 
