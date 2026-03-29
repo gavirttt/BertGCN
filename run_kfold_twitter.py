@@ -11,9 +11,18 @@ Pipeline:
        a. Loads labeled doc indices from data/twitter.txt
        b. Splits them into k folds (StratifiedGroupKFold by conversation ID,
           or plain StratifiedKFold with --no_keep_conversations)
-       c. For each fold, writes two temp index files and calls train_bert_gcn.py
+       c. For each fold, checks if a persistent fold-level BERT checkpoint
+          already exists before finetuning. If it does, reuses it; otherwise
+          finetunes BERT on that fold's train set and saves to a stable
+          deterministic directory so subsequent runs can skip this step.
+       d. Writes two temp index files and calls train_bert_gcn.py
           with --train_indices / --test_indices so only the masks change
-       d. Aggregates metrics across folds and seeds
+       e. Aggregates metrics across folds and seeds
+
+Fold BERT checkpoint directory layout:
+  ./checkpoint/bert_fold{fold_id}_seed{seed}_k{k}_{bert_init_slug}_{dataset}/
+    checkpoint.pth   — best BERT weights for this fold (persists across runs)
+    training.log
 
 Usage:
     # Single seed, 5-fold, conversation-aware (default)
@@ -198,6 +207,23 @@ def _log_class_distribution(indices, label_df, split_name, logger=None):
     
     return label_counts
 
+
+def _fold_bert_ckpt_dir(fold_id: int, seed: int, k: int, bert_init: str) -> str:
+    """
+    Returns the deterministic, persistent directory for a fold's finetuned
+    BERT checkpoint.  The path is stable across runs so subsequent calls
+    can detect and reuse existing checkpoints.
+
+    Layout:
+        ./checkpoint/finetuned/bert_fold{fold_id}_seed{seed}_k{k}_{bert_slug}_{dataset}/
+    """
+    bert_slug = bert_init.replace('/', '_').replace('\\', '_')
+    return os.path.join(
+        './checkpoint/finetuned',
+        f'bert_fold{fold_id}_seed{seed}_k{k}_{bert_slug}_{DATASET}'
+    )
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Per-seed CV run
 # ─────────────────────────────────────────────────────────────────────────────
@@ -312,26 +338,41 @@ def run_kfold(
             _write_index_file([corpus_to_node[i] for i in train_doc_idx], train_file)
             _write_index_file([corpus_to_node[i] for i in test_doc_idx],  test_file)
 
-            # Write fold train indices to temp file
-            fold_bert_train_file = os.path.join(tmpdir, f'bert_train_fold{fold_id}.txt')
-            _write_index_file(train_doc_idx, fold_bert_train_file)
-            
-            # Finetune BERT on this fold's train set only
-            bert_ckpt_dir = os.path.join(tmpdir, f'bert_ckpt_fold{fold_id}')
+            # ── Persistent fold BERT checkpoint ───────────────────────────
+            # Use a stable, deterministic directory so the checkpoint survives
+            # across runs. Subsequent runs skip finetuning if it already exists.
+            bert_ckpt_dir = _fold_bert_ckpt_dir(fold_id, seed, k, bert_init)
             fold_bert_ckpt = os.path.join(bert_ckpt_dir, 'checkpoint.pth')
-            cmd_finetune = [
-                sys.executable, 'finetune_bert.py',
-                '--dataset', DATASET,
-                '--bert_init', bert_init,
-                '--train_indices', fold_bert_train_file,
-                '--checkpoint_dir', bert_ckpt_dir,
-                '--nb_epochs', str(10),
-                '--bert_lr', '2e-5'
-            ]
-            _run(cmd_finetune, f'Finetune BERT — fold {fold_id + 1}/{k}')
-            
+
+            if os.path.exists(fold_bert_ckpt):
+                print(f'\n  ✓ Reusing existing fold BERT checkpoint:')
+                print(f'    {fold_bert_ckpt}')
+            else:
+                print(f'\n  No fold BERT checkpoint found at:')
+                print(f'    {fold_bert_ckpt}')
+                print(f'  Finetuning BERT for fold {fold_id + 1}/{k} ...')
+
+                fold_bert_train_file = os.path.join(tmpdir, f'bert_train_fold{fold_id}.txt')
+                _write_index_file(train_doc_idx, fold_bert_train_file)
+
+                os.makedirs(bert_ckpt_dir, exist_ok=True)
+                cmd_finetune = [
+                    sys.executable, 'finetune_bert.py',
+                    '--dataset', DATASET,
+                    '--bert_init', bert_init,
+                    '--train_indices', fold_bert_train_file,
+                    '--checkpoint_dir', bert_ckpt_dir,
+                    '--nb_epochs', str(10),
+                    '--bert_lr', '2e-5'
+                ]
+                _run(cmd_finetune, f'Finetune BERT — fold {fold_id + 1}/{k}')
+
+                if not os.path.exists(fold_bert_ckpt):
+                    print(f'  ✗ WARNING: finetune_bert.py did not produce a checkpoint at {fold_bert_ckpt}')
+                    print(f'    Fold {fold_id + 1} will proceed without a pretrained BERT checkpoint.')
+
             ckpt_dir = (
-                f'./checkpoint/{DATASET}_fold{fold_id}_seed{seed}_{gcn_model}_'
+                f'./checkpoint/finetuned/{DATASET}_fold{fold_id}_seed{seed}_{gcn_model}_'
                 f'{datetime.now().strftime("%Y%m%d_%H%M%S")}'
             )
 
@@ -463,6 +504,8 @@ def main():
             print(f'⚠ Warning: --pretrained_bert_ckpt not found at {pretrained_bert_ckpt}')
             print(f'  All folds will train BERT from scratch.')
 
+    # Print the expected fold BERT checkpoint paths so the user can see
+    # which ones will be reused vs finetuned on this run.
     print('╔═════════════════════╗')
     print('║  Twitter K-Fold CV  ║')
     print('╚═════════════════════╝')
@@ -475,6 +518,18 @@ def main():
     print(f'  pretrained ckpt    : {pretrained_bert_ckpt or "None (train from scratch)"}')
     print(f'  keep conversations : {args.keep_conversations}')
     print()
+
+    # Preview fold BERT checkpoint status for all seeds/folds
+    print('  Fold BERT checkpoint status:')
+    for seed in seeds:
+        for fold_id in range(args.k):
+            ckpt_dir = _fold_bert_ckpt_dir(fold_id, seed, args.k, args.bert_init)
+            ckpt_path = os.path.join(ckpt_dir, 'checkpoint.pth')
+            status = '✓ exists (will reuse)' if os.path.exists(ckpt_path) else '✗ missing (will finetune)'
+            print(f'    seed={seed} fold={fold_id}: {status}')
+            print(f'      {ckpt_path}')
+    print()
+
     print('  NOTE: The graph must already exist on disk.')
     print(f'        Expected: data/ind.{DATASET}.adj')
 
