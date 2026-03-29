@@ -71,7 +71,7 @@ all_probs = np.concatenate(all_probs, axis=0)
 preds = all_probs.argmax(axis=1)
 
 # Save results
-df['predicted_sentiment'] = [label_map[p] for p in preds]
+df['sentiment'] = [label_map[p] for p in preds]
 df['prob_positive'] = all_probs[:, 0]
 df['prob_negative'] = all_probs[:, 1]
 df['prob_neutral']  = all_probs[:, 2]
