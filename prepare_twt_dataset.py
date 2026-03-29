@@ -11,6 +11,62 @@ import re, html, emoji
 import pickle
 import json
 
+# ── Author / mention resolution ───────────────────────────────────────────────
+# Module-level mapping populated by load_author_lookup().
+_hashid_to_username: dict[str, str] = {}
+_MENTION_RE = re.compile(r"@(\w+)")
+
+
+def load_author_lookup(path: str) -> None:
+    """
+    Populate the module-level hashid → real_username mapping from a CSV.
+
+    The CSV is expected to have at least two columns:
+      - ``obfuscated_userName``  : the hashed / obfuscated handle
+      - ``author_userName``      : the real username
+
+    Leading ``@`` signs are stripped from both columns before storing.
+    Call this once before processing any text.  If *path* is empty or
+    ``None`` the function is a no-op so callers don't need to guard it.
+    """
+    if not path:
+        return
+
+    df = pd.read_csv(path)
+    required = {"obfuscated_userName", "author_userName"}
+    missing = required - set(df.columns)
+    if missing:
+        raise ValueError(
+            f"Author lookup CSV is missing column(s): {missing}. "
+            f"Found: {df.columns.tolist()}"
+        )
+
+    count = 0
+    for _, row in df.iterrows():
+        hashid = str(row["obfuscated_userName"]).lstrip("@").strip()
+        real = str(row["author_userName"]).lstrip("@").strip()
+        if hashid and real:
+            _hashid_to_username[hashid] = real
+            count += 1
+
+    print(f"  [author lookup] {count:,} hashid → username mappings loaded from '{path}'.")
+
+
+def resolve_mentions(text: str) -> str:
+    """Replace obfuscated @mentions with real usernames where known.
+
+    Handles only mentions present in the lookup populated by
+    :func:`load_author_lookup`.  Unknown mentions are left unchanged.
+    """
+    def _replace(m: re.Match) -> str:
+        handle = m.group(1)
+        return "@" + _hashid_to_username[handle] if handle in _hashid_to_username else m.group(0)
+
+    return _MENTION_RE.sub(_replace, text)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+
 def clean_text(text):
     """Clean tweet text"""
     if pd.isna(text):
@@ -47,6 +103,10 @@ def clean_text(text):
     # Normalize mentions and hashtags
     text = re.sub(r'@{2,}', '@', text)
     text = re.sub(r'@\s+', '@', text)
+
+    # Resolve obfuscated mentions → real usernames (no-op if lookup not loaded)
+    text = resolve_mentions(text)
+
     text = re.sub(r'#{2,}', '#', text)
     text = re.sub(r'#\s+', '#', text)
 
@@ -64,7 +124,8 @@ def prepare_twitter_dataset(
     output_dir='data',
     dataset_name='twitter',
     seed=42,
-    test_split_ratio=0.2
+    test_split_ratio=0.2,
+    authors_path=None,
 ):
     """
     Prepare Twitter dataset for BertGCN
@@ -75,8 +136,18 @@ def prepare_twitter_dataset(
         dataset_name: Name for the dataset
         seed: Random seed (for reproducibility)
         test_split_ratio: Ratio of data to use as test set (default: 0.2)
+        authors_path: Optional path to author hashid lookup CSV.  When
+            supplied, obfuscated @mentions in tweet text are resolved to
+            real usernames before the cleaned corpus is written.
     """
-    
+
+    # Load author lookup so resolve_mentions is ready before any text is cleaned
+    if authors_path:
+        print(f"\nLoading author lookup: {authors_path}")
+        load_author_lookup(authors_path)
+    else:
+        print("\n[author lookup] No --authors file provided; mentions will not be resolved.")
+
     print(f"Loading labeled dataset from {csv_path}...")
     df = pd.read_csv(csv_path)
     
@@ -200,6 +271,9 @@ if __name__ == '__main__':
                        help='Dataset name (default: twitter)')
     parser.add_argument('--seed', type=int, default=42,
                        help='Random seed (default: 42)')
+    parser.add_argument('--authors', type=str, default=None,
+                       help='Path to author hashid lookup CSV (columns: obfuscated_userName, author_userName). '
+                            'When provided, obfuscated @mentions are resolved to real usernames in the cleaned corpus.')
     parser.add_argument('--test_split_ratio', type=float, default=0.2,
                        help='Ratio of data to use as test set (default: 0.2)')
     
@@ -210,5 +284,6 @@ if __name__ == '__main__':
         output_dir=args.output_dir,
         dataset_name=args.dataset_name,
         seed=args.seed,
-        test_split_ratio=args.test_split_ratio
+        test_split_ratio=args.test_split_ratio,
+        authors_path=args.authors,
     )
