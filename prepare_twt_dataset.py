@@ -13,7 +13,7 @@ import json
 
 # ── Author / mention resolution ───────────────────────────────────────────────
 # Module-level mapping populated by load_author_lookup().
-_hashid_to_username: dict[str, str] = {}
+_hashid_to_username = {}
 _MENTION_RE = re.compile(r"@(\w+)")
 
 

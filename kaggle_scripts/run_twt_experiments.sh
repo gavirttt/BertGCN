@@ -138,7 +138,11 @@ section "STEP 1 — Prepare Twitter Dataset"
 
 step "Running prepare_twt_dataset.py"
 $PYTHON prepare_twt_dataset.py \
-    --csv "$LABELED_CSV"
+  --csv "$LABELED_CSV" \
+  --authors data/well_known_authors_philippine_elections.csv \
+  --output_dir data \
+  --dataset_name twitter \
+  --test_split_ratio 0.1
 
 echo "✓ Dataset prepared"
 
