@@ -350,6 +350,243 @@ for c in range(args.n_topics):
     print(f"\nCluster {c} top keywords:")
     print([w for w, _ in keywords[:15]])
  
+# ── Coherence Scoring: UMass & UCI ───────────────────────────────────────────
+print("\nComputing UMass and UCI coherence scores...")
+
+def get_top_words(llr_results, cluster_id, top_n=10):
+    """Return the top-N words for a cluster from LLR results."""
+    keywords = llr_results[f'cluster_{cluster_id}']
+    return [w for w, _ in keywords[:top_n]]
+
+def build_cooccurrence_matrix(doc_term_matrix, vocab, word2id):
+    """
+    Build a sparse co-document frequency matrix D(wi, wj):
+    number of documents where both wi and wj appear.
+    Also returns D(wi): number of documents where wi appears.
+    Uses the full doc_term_matrix (binary presence per doc).
+    """
+    binary = (doc_term_matrix > 0).astype(np.float32)  # shape: (n_docs, vocab_size)
+    # D(wi): sum over docs for each word
+    doc_freq = np.asarray(binary.sum(axis=0)).flatten()  # shape: (vocab_size,)
+    # D(wi, wj): binary.T @ binary  — (vocab_size, vocab_size)
+    # This can be large; we compute on-demand per word pair instead
+    return binary, doc_freq
+
+def compute_umass(top_words, binary_matrix, doc_freq, word2id, epsilon=1.0):
+    """
+    UMass coherence:
+      C_UMass = (2 / N(N-1)) * sum_{j>i} log( (D(wi,wj) + eps) / D(wj) )
+    where wi appears BEFORE wj in ranking (j > i means wj is less frequent/ranked lower).
+    Uses the corpus (doc_term_matrix) for all probability estimates.
+    """
+    N = len(top_words)
+    if N < 2:
+        return float('nan')
+
+    score = 0.0
+    pairs = 0
+    for i in range(N - 1):
+        for j in range(i + 1, N):
+            wi, wj = top_words[i], top_words[j]
+            if wi not in word2id or wj not in word2id:
+                continue
+            idx_i = word2id[wi]
+            idx_j = word2id[wj]
+            # D(wi, wj): docs where BOTH appear
+            col_i = np.asarray(binary_matrix[:, idx_i].todense()).flatten()
+            col_j = np.asarray(binary_matrix[:, idx_j].todense()).flatten()
+            d_wi_wj = float(np.logical_and(col_i, col_j).sum())
+            d_wj    = float(doc_freq[idx_j])
+            if d_wj == 0:
+                continue
+            score += np.log((d_wi_wj + epsilon) / d_wj)
+            pairs += 1
+
+    if pairs == 0:
+        return float('nan')
+    normalizer = 2.0 / (N * (N - 1))
+    return normalizer * score
+
+def build_uci_cooccurrence(texts, word2id, window_size=10):
+    """
+    Build co-occurrence counts over a sliding window for UCI.
+    Returns:
+      - word_count: dict {word_id: count of windows containing word}
+      - pair_count: dict {(i,j): count of windows containing both}
+      - total_windows: int
+    """
+    word_count  = {}
+    pair_count  = {}
+    total_windows = 0
+
+    for text in texts:
+        tokens = text.lower().split()
+        token_ids = [word2id[t] for t in tokens if t in word2id]
+        n = len(token_ids)
+        for start in range(n):
+            window = set(token_ids[start: start + window_size])
+            total_windows += 1
+            for wid in window:
+                word_count[wid] = word_count.get(wid, 0) + 1
+            win_list = list(window)
+            for a in range(len(win_list)):
+                for b in range(a + 1, len(win_list)):
+                    pair = (min(win_list[a], win_list[b]),
+                            max(win_list[a], win_list[b]))
+                    pair_count[pair] = pair_count.get(pair, 0) + 1
+
+    return word_count, pair_count, total_windows
+
+def compute_uci(top_words, word_count, pair_count, total_windows, word2id, epsilon=1.0):
+    """
+    UCI coherence:
+      C_UCI = (2 / N(N-1)) * sum_{j>i} log( (P(wi,wj) + eps) / (P(wi) * P(wj)) )
+    where probabilities are estimated from sliding-window co-occurrences.
+    """
+    N = len(top_words)
+    if N < 2:
+        return float('nan')
+
+    score = 0.0
+    pairs = 0
+    for i in range(N - 1):
+        for j in range(i + 1, N):
+            wi, wj = top_words[i], top_words[j]
+            if wi not in word2id or wj not in word2id:
+                continue
+            idx_i = word2id[wi]
+            idx_j = word2id[wj]
+
+            cnt_i  = word_count.get(idx_i, 0)
+            cnt_j  = word_count.get(idx_j, 0)
+            pair   = (min(idx_i, idx_j), max(idx_i, idx_j))
+            cnt_ij = pair_count.get(pair, 0)
+
+            if cnt_i == 0 or cnt_j == 0 or total_windows == 0:
+                continue
+
+            p_wi   = cnt_i  / total_windows
+            p_wj   = cnt_j  / total_windows
+            p_wi_wj = cnt_ij / total_windows
+
+            score += np.log((p_wi_wj + epsilon / total_windows) / (p_wi * p_wj))
+            pairs += 1
+
+    if pairs == 0:
+        return float('nan')
+    normalizer = 2.0 / (N * (N - 1))
+    return normalizer * score
+
+# ── Build shared structures ───────────────────────────────────────────────────
+vocab    = vectorizer.get_feature_names_out().tolist()
+word2id  = {w: i for i, w in enumerate(vocab)}
+
+print("  Building co-document matrix for UMass...")
+binary_matrix, doc_freq = build_cooccurrence_matrix(doc_term_matrix, vocab, word2id)
+
+print("  Building sliding-window co-occurrence for UCI (window=10)...")
+word_count, pair_count, total_windows = build_uci_cooccurrence(
+    texts_cleaned, word2id, window_size=10
+)
+
+# ── Compute per-cluster scores ────────────────────────────────────────────────
+TOP_N_COHERENCE = 10  # number of top words used for coherence scoring
+
+coherence_results = {}
+for c in range(args.n_topics):
+    top_words = get_top_words(llr_results, c, top_n=TOP_N_COHERENCE)
+
+    umass = compute_umass(top_words, binary_matrix, doc_freq, word2id)
+    uci   = compute_uci(top_words, word_count, pair_count, total_windows, word2id)
+
+    coherence_results[f'cluster_{c}'] = {
+        'top_words': top_words,
+        'umass':     round(umass, 6) if not np.isnan(umass) else None,
+        'uci':       round(uci,   6) if not np.isnan(uci)   else None,
+    }
+    print(f"  Cluster {c}: UMass={umass:.4f}  UCI={uci:.4f}  | words: {top_words[:5]}")
+
+# ── Save coherence to JSON ────────────────────────────────────────────────────
+coherence_json_path = os.path.join(args.output_dir, f'{output_subdir}coherence_scores.json')
+with open(coherence_json_path, 'w', encoding='utf-8') as f:
+    json.dump(coherence_results, f, indent=2, ensure_ascii=False)
+print(f"\nCoherence scores saved to {coherence_json_path}")
+
+# ── Save coherence to CSV ─────────────────────────────────────────────────────
+coherence_rows = []
+for cluster_key, vals in coherence_results.items():
+    coherence_rows.append({
+        'cluster':    cluster_key,
+        'umass':      vals['umass'],
+        'uci':        vals['uci'],
+        'top_words':  ', '.join(vals['top_words']),
+    })
+coherence_df = pd.DataFrame(coherence_rows)
+
+avg_umass = coherence_df['umass'].mean()
+avg_uci   = coherence_df['uci'].mean()
+coherence_rows.append({
+    'cluster':   'AVERAGE',
+    'umass':     round(avg_umass, 6),
+    'uci':       round(avg_uci,   6),
+    'top_words': '',
+})
+coherence_df = pd.DataFrame(coherence_rows)
+
+coherence_csv_path = os.path.join(args.output_dir, f'{output_subdir}coherence_scores.csv')
+coherence_df.to_csv(coherence_csv_path, index=False)
+print(f"Coherence scores CSV saved to {coherence_csv_path}")
+print(f"\nAverage UMass: {avg_umass:.4f}")
+print(f"Average UCI:   {avg_uci:.4f}")
+
+# ── Plot coherence bar chart ──────────────────────────────────────────────────
+def plot_coherence(coherence_results, avg_umass, avg_uci, output_dir, output_subdir):
+    cluster_labels_plot = list(coherence_results.keys())
+    umass_scores = [coherence_results[c]['umass'] or 0 for c in cluster_labels_plot]
+    uci_scores   = [coherence_results[c]['uci']   or 0 for c in cluster_labels_plot]
+
+    x     = np.arange(len(cluster_labels_plot))
+    width = 0.35
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
+
+    bars1 = ax1.bar(x, umass_scores, width, color='#377eb8', alpha=0.85, label='UMass')
+    ax1.axhline(avg_umass, color='#e41a1c', linestyle='--', linewidth=1.5,
+                label=f'Avg: {avg_umass:.3f}')
+    ax1.set_title('UMass Coherence per Cluster', fontsize=12, fontweight='bold')
+    ax1.set_xlabel('Cluster')
+    ax1.set_ylabel('UMass Score')
+    ax1.set_xticks(x)
+    ax1.set_xticklabels(cluster_labels_plot, rotation=15)
+    ax1.legend()
+    for bar in bars1:
+        h = bar.get_height()
+        ax1.text(bar.get_x() + bar.get_width() / 2, h + 0.002,
+                 f'{h:.3f}', ha='center', va='bottom', fontsize=9)
+
+    bars2 = ax2.bar(x, uci_scores, width, color='#4daf4a', alpha=0.85, label='UCI')
+    ax2.axhline(avg_uci, color='#e41a1c', linestyle='--', linewidth=1.5,
+                label=f'Avg: {avg_uci:.3f}')
+    ax2.set_title('UCI Coherence per Cluster', fontsize=12, fontweight='bold')
+    ax2.set_xlabel('Cluster')
+    ax2.set_ylabel('UCI Score')
+    ax2.set_xticks(x)
+    ax2.set_xticklabels(cluster_labels_plot, rotation=15)
+    ax2.legend()
+    for bar in bars2:
+        h = bar.get_height()
+        ax2.text(bar.get_x() + bar.get_width() / 2, h + 0.002,
+                 f'{h:.3f}', ha='center', va='bottom', fontsize=9)
+
+    plt.suptitle(f'Topic Coherence Scores ({output_subdir})', fontsize=13, fontweight='bold')
+    plt.tight_layout()
+    path = os.path.join(output_dir, f'{output_subdir}coherence_scores.png')
+    plt.savefig(path, dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"Coherence bar chart saved to {path}")
+
+plot_coherence(coherence_results, avg_umass, avg_uci, args.output_dir, output_subdir)
+
 # ── Word clouds ───────────────────────────────────────────────────────────────
 def generate_wordclouds(llr_results, output_dir, output_subdir, n_topics, colors):
     """Generate individual and combined word cloud PNGs using LLR scores."""
