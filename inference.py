@@ -13,7 +13,7 @@ label_map = {0: 'positive', 1: 'negative', 2: 'neutral'}
 device = th.device('cuda' if th.cuda.is_available() else 'cpu')
 print(f"Using device: {device}")
 
-checkpoint_path = 'checkpoint/dost-asti/RoBERTa-tl-sentiment-analysis/checkpoint.pth'
+checkpoint_path = 'checkpoint/dost-asti/RoBERTa-tl-sentiment-analysis_twitter/checkpoint.pth'
 
 if not os.path.exists(checkpoint_path):
     raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
@@ -79,4 +79,4 @@ df['prob_neutral']  = all_probs[:, 2]
 df.to_csv('predictions.csv', index=False)
 print(f"Predictions saved to predictions.csv")
 print(f"\nPrediction distribution:")
-print(df['predicted_sentiment'].value_counts())
+print(df['sentiment'].value_counts())
