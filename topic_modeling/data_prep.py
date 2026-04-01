@@ -41,7 +41,7 @@ import pandas as pd
 import emoji
 
 sys.path.append(".")
-from prepare_twt_dataset import clean_text
+from prepare_twt_dataset import clean_text, load_author_lookup
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
@@ -70,6 +70,7 @@ df_labeled["source"] = "labeled"
 
 # Clean text for labeled rows — produces cleaned_text column to match predictions CSV
 print("  Cleaning text for labeled rows...")
+load_author_lookup(args.authors)
 df_labeled["cleaned_text"] = df_labeled["text"].apply(clean_text)
 
 # ── Load predictions CSV ──────────────────────────────────────────────────────

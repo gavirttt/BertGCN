@@ -1,4 +1,4 @@
-from prepare_twt_dataset import clean_text
+from prepare_twt_dataset import clean_text, load_author_lookup
 from tqdm import tqdm
 import os
 import torch as th
@@ -21,6 +21,7 @@ print(f"Using checkpoint: {checkpoint_path}")
 
 # Load and clean unlabeled data
 df = pd.read_csv('data/tweets_unlabeled_set.csv')
+load_author_lookup("data/well_known_authors_philippine_elections.csv")
 df['cleaned_text'] = df['text'].apply(clean_text)
 texts = df['cleaned_text'].tolist()
 print(f"Loaded {len(texts)} unlabeled tweets")
