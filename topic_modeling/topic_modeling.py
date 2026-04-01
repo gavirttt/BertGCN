@@ -34,6 +34,9 @@ parser.add_argument('--csv', type=str, required=True,
 parser.add_argument('--bert_init', type=str,
                     default='dost-asti/RoBERTa-tl-sentiment-analysis',
                     help='Pretrained BERT model to use for embeddings')
+parser.add_argument('--checkpoint', type=str, default=None,
+                    help='Path to fine-tuned BERT checkpoint (optional). '
+                         'If omitted, uses pretrained weights as-is.')
 parser.add_argument('--n_topics', type=int, default=5)
 parser.add_argument('--sentiment', type=str, default=None,
                     help='Filter by sentiment. ',
@@ -175,9 +178,19 @@ texts_cleaned = df['cleaned_text2'].fillna('').tolist() \
 print(f"\nLoading BERT: {args.bert_init}")
 tokenizer  = AutoTokenizer.from_pretrained(args.bert_init)
 bert_model = AutoModel.from_pretrained(args.bert_init)
+
+if args.checkpoint:
+    if not os.path.exists(args.checkpoint):
+        raise FileNotFoundError(f"Checkpoint not found: {args.checkpoint}")
+    print(f"Loading fine-tuned checkpoint: {args.checkpoint}")
+    ckpt = th.load(args.checkpoint, map_location=device)
+    bert_model.load_state_dict(ckpt['bert_model'])
+    print("Fine-tuned checkpoint loaded.")
+else:
+    print("No checkpoint provided — using pretrained weights as-is.")
+
 bert_model = bert_model.to(device)
 bert_model.eval()
-print("Using pretrained model as-is (no fine-tuned checkpoint)")
  
 # ── Extract BERT CLS embeddings ───────────────────────────────────────────────
 print("\nExtracting BERT embeddings...")
