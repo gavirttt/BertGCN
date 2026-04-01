@@ -305,7 +305,7 @@ print(f"UMAP saved to {umap_path}")
 print("\nComputing LLR keywords per cluster...")
 feature_names = vectorizer.get_feature_names_out()
  
-def compute_llr(doc_term_matrix, cluster_labels, cluster_id, top_n=30):
+def compute_llr(doc_term_matrix, cluster_labels, cluster_id, top_n=100):
     """Log-Likelihood Ratio for words in a cluster vs the rest."""
     in_cluster  = (cluster_labels == cluster_id)
     out_cluster = ~in_cluster
