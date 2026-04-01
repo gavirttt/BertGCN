@@ -424,23 +424,14 @@ def sentiment_color_func_tweet_based(word, word_sentiment_data, font_size=None,
     }
 
     if word not in word_sentiment_data:
-        return '#999999'
+        return '#000000'
 
     dominant_sentiment = word_sentiment_data[word]['dominant']
-    confidence = word_sentiment_data[word]['confidence']
+    # confidence = word_sentiment_data[word]['confidence']
 
-    # Parse hex → RGB
-    hex_color = sentiment_colors[dominant_sentiment].lstrip('#')
-    r, g, b = (int(hex_color[i:i+2], 16) for i in (0, 2, 4))
+    sentiment_colors[dominant_sentiment]
 
-    # Blend toward gray based on confidence (0.5 → very gray, 1.0 → full color)
-    blend = max((confidence - 0.5) / 0.5, 0.0)  # normalizes to 0.0–1.0
-    gray = 180
-    r = int(gray + (r - gray) * blend)
-    g = int(gray + (g - gray) * blend)
-    b = int(gray + (b - gray) * blend)
-
-    return f'#{r:02x}{g:02x}{b:02x}'
+    return sentiment_colors[dominant_sentiment]
 
 def generate_sentiment_wordclouds_tweet_based(llr_results, texts_cleaned, df, 
                                               cluster_labels, output_dir, 
@@ -599,16 +590,6 @@ def generate_sentiment_wordclouds_tweet_based(llr_results, texts_cleaned, df,
         
         axes[c].set_title(f'Cluster {c}', fontsize=13, fontweight='bold')
         axes[c].axis('off')
-        
-        # Add sentiment legend
-        from matplotlib.patches import Patch
-        legend_elements = [
-            Patch(facecolor='#4daf4a', label='Positive words'),
-            Patch(facecolor='#e41a1c', label='Negative words'),
-            Patch(facecolor='#377eb8', label='Neutral words'),
-            Patch(facecolor='#888888', label='Mixed/Uncertain')
-        ]
-        axes[c].legend(handles=legend_elements, loc='lower right', fontsize=8)
     
     # Hide empty subplots
     for c in range(n_topics, len(axes)):
