@@ -65,7 +65,7 @@ print(f"Columns: {df.columns.tolist()}")
  
 # ── Parse dates ───────────────────────────────────────────────────────────────
 if 'createdAt' in df.columns:
-    df['createdAt'] = pd.to_datetime(df['createdAt'], infer_datetime_format=True)
+    df['createdAt'] = pd.to_datetime(df['createdAt'])
     df['year_month'] = df['createdAt'].dt.to_period('M')
     print(f"\nDate range: {df['year_month'].min()} to {df['year_month'].max()}")
     print(f"Months available:\n{df['year_month'].value_counts().sort_index().to_string()}")
@@ -139,12 +139,13 @@ if not args.sentiment and not args.month:
 # ── Apply sentiment filter ────────────────────────────────────────────────────
 if args.sentiment:
     sentiment_filter = args.sentiment.lower().strip()
+    available_sentiments = df['sentiment_label'].unique().tolist()  # capture before filtering
     df = df[df['sentiment_label'] == sentiment_filter].reset_index(drop=True)
     print(f"\nFiltered to sentiment='{sentiment_filter}': {len(df)} tweets")
     if len(df) == 0:
         raise ValueError(
             f"No tweets found for sentiment='{args.sentiment}'. "
-            f"Available: {df['sentiment_label'].unique().tolist()}"
+            f"Available: {available_sentiments}"
         )
  
 # ── Apply month filter ────────────────────────────────────────────────────────
@@ -240,7 +241,8 @@ tagalog_stopwords = [
     'anong', 'nitong', 'gayunmang', 'inyong', 
     'iyong', 'kanyang', 'kaniyang', 'kanilang', 
     'kaninong', 'mismong', 'naritong', 'nanditong', 
-    'ritong', 'nyong', 'saan', 'saang'
+    'ritong', 'nyong', 'saan', 'saang', 'upang',
+    'tapos', 'mula'
 ]
  
 english_stopwords = list(CountVectorizer(stop_words='english').get_stop_words())
@@ -307,22 +309,26 @@ def compute_llr(doc_term_matrix, cluster_labels, cluster_id, top_n=30):
     """Log-Likelihood Ratio for words in a cluster vs the rest."""
     in_cluster  = (cluster_labels == cluster_id)
     out_cluster = ~in_cluster
- 
-    in_docs  = doc_term_matrix[in_cluster].toarray()
-    out_docs = doc_term_matrix[out_cluster].toarray()
- 
-    N_in  = in_docs.shape[0]
-    N_out = out_docs.shape[0]
+
+    # Use sparse boolean operations to avoid dense OOM on large matrices
+    in_docs_sparse  = doc_term_matrix[in_cluster]
+    out_docs_sparse = doc_term_matrix[out_cluster]
+
+    N_in  = in_docs_sparse.shape[0]
+    N_out = out_docs_sparse.shape[0]
     N     = N_in + N_out
     eps   = 1e-10
- 
+
+    # Binary word presence counts computed sparsely
+    k_arr = np.asarray((in_docs_sparse  > 0).sum(axis=0)).flatten()
+    l_arr = np.asarray((out_docs_sparse > 0).sum(axis=0)).flatten()
+    m_arr = N_in  - k_arr
+    n_arr = N_out - l_arr
+
     llr_scores = []
     for j in range(doc_term_matrix.shape[1]):
-        k = (in_docs[:, j]  > 0).sum()
-        l = (out_docs[:, j] > 0).sum()
-        m = N_in  - k
-        n = N_out - l
- 
+        k = k_arr[j]; l = l_arr[j]; m = m_arr[j]; n = n_arr[j]
+
         p_w    = (k + l) / N
         p_w_T  = k / N_in  if N_in  > 0 else eps
         p_w_nT = l / N_out if N_out > 0 else eps
@@ -351,70 +357,306 @@ for c in range(args.n_topics):
     print([w for w, _ in keywords[:15]])
  
 # ── Word clouds ───────────────────────────────────────────────────────────────
-def generate_wordclouds(llr_results, output_dir, output_subdir, n_topics, colors):
-    """Generate individual and combined word cloud PNGs using LLR scores."""
-    print("\nGenerating word clouds...")
- 
+# ── Sentiment-colored word clouds using existing tweet labels ──────────────────
+def compute_word_sentiment_distribution(words, texts_cleaned, df, cluster_labels, cluster_id):
+    """
+    Compute sentiment distribution for each word based on the tweets it appears in.
+    """
+    # Get indices of tweets in this cluster
+    cluster_indices = [i for i in range(len(cluster_labels)) if cluster_labels[i] == cluster_id]
+    
+    # Get sentiment labels for these tweets
+    cluster_df = df.iloc[cluster_indices].copy()
+    cluster_texts = [texts_cleaned[i] for i in cluster_indices]
+    
+    word_sentiment_counts = {}
+    
+    for word in words:
+        # Initialize counts for this word
+        sentiment_counts = {
+            'positive': 0,
+            'negative': 0,
+            'neutral': 0,
+            'total': 0
+        }
+        
+        # Find all tweets containing this word
+        for idx, text in enumerate(cluster_texts):
+            if word.lower() in text.lower():
+                sentiment = cluster_df.iloc[idx]['sentiment_label']
+                sentiment_counts[sentiment] += 1
+                sentiment_counts['total'] += 1
+        
+        # Calculate proportions
+        if sentiment_counts['total'] > 0:
+            proportions = {
+                'positive': sentiment_counts['positive'] / sentiment_counts['total'],
+                'negative': sentiment_counts['negative'] / sentiment_counts['total'],
+                'neutral': sentiment_counts['neutral'] / sentiment_counts['total']
+            }
+            # Determine dominant sentiment
+            dominant = max(proportions, key=proportions.get)
+            confidence = proportions[dominant]
+        else:
+            proportions = {'positive': 0, 'negative': 0, 'neutral': 0}
+            dominant = 'neutral'
+            confidence = 0.5
+        
+        word_sentiment_counts[word] = {
+            'counts': sentiment_counts,
+            'proportions': proportions,
+            'dominant': dominant,
+            'confidence': confidence
+        }
+    
+    return word_sentiment_counts
+
+def sentiment_color_func_tweet_based(word, word_sentiment_data, font_size=None, 
+                                     position=None, orientation=None, font_path=None, 
+                                     random_state=None):
+    """
+    Color function for word cloud based on sentiment distribution from tweet labels.
+    """
+    sentiment_colors = {
+        'positive': '#4daf4a',
+        'negative': '#e41a1c',
+        'neutral':  "#777777"
+    }
+
+    if word not in word_sentiment_data:
+        return '#999999'
+
+    dominant_sentiment = word_sentiment_data[word]['dominant']
+    confidence = word_sentiment_data[word]['confidence']
+
+    # Parse hex → RGB
+    hex_color = sentiment_colors[dominant_sentiment].lstrip('#')
+    r, g, b = (int(hex_color[i:i+2], 16) for i in (0, 2, 4))
+
+    # Blend toward gray based on confidence (0.5 → very gray, 1.0 → full color)
+    blend = max((confidence - 0.5) / 0.5, 0.0)  # normalizes to 0.0–1.0
+    gray = 180
+    r = int(gray + (r - gray) * blend)
+    g = int(gray + (g - gray) * blend)
+    b = int(gray + (b - gray) * blend)
+
+    return f'#{r:02x}{g:02x}{b:02x}'
+
+def generate_sentiment_wordclouds_tweet_based(llr_results, texts_cleaned, df, 
+                                              cluster_labels, output_dir, 
+                                              output_subdir, n_topics):
+    """
+    Generate word clouds with sentiment coloring based on tweet-level sentiment labels.
+    """
+    print("\nGenerating sentiment-colored word clouds using tweet-level sentiment labels...")
+    
+    # Create directory for sentiment word clouds
+    sentiment_wc_dir = os.path.join(output_dir, f'{output_subdir}sentiment_wordclouds')
+    os.makedirs(sentiment_wc_dir, exist_ok=True)
+    
+    # Store overall sentiment statistics
+    all_cluster_stats = {}
+    
+    # Process each cluster
     for c in range(n_topics):
-        keywords     = llr_results[f'cluster_{c}']
+        print(f"\nProcessing Cluster {c}...")
+        
+        # Get keywords for this cluster
+        keywords = llr_results[f'cluster_{c}']
         word_weights = {w: s for w, s in keywords if s > 0}
- 
+        
         if not word_weights:
             print(f"  Cluster {c}: no positive LLR scores, skipping.")
             continue
- 
+        
+        # Get unique words from this cluster
+        cluster_words = list(word_weights.keys())
+        
+        # Compute sentiment distribution for each word based on tweet labels
+        word_sentiment_data = compute_word_sentiment_distribution(
+            cluster_words, texts_cleaned, df, cluster_labels, c
+        )
+        
+        # Create custom color function (default arg captures current value, not reference)
+        def color_func(word, *args, wsd=word_sentiment_data, **kwargs):
+            return sentiment_color_func_tweet_based(word, wsd)
+        
+        # Generate individual word cloud for this cluster
         wc = WordCloud(
-            width=800,
-            height=400,
+            width=1200,
+            height=600,
             background_color='white',
-            color_func=lambda *args, **kwargs: colors[c % len(colors)],
-            max_words=50,
+            color_func=color_func,
+            max_words=100,
             prefer_horizontal=0.9,
-            random_state=42
+            random_state=42,
+            collocations=False
         )
         wc.generate_from_frequencies(word_weights)
-        path = os.path.join(output_dir, f'{output_subdir}wordcloud_cluster{c}.png')
+        
+        # Save individual word cloud
+        path = os.path.join(sentiment_wc_dir, f'cluster{c}_sentiment_wordcloud.png')
         wc.to_file(path)
-        print(f"  Cluster {c} word cloud saved to {path}")
- 
-    # Combined grid
+        print(f"  Sentiment-colored word cloud saved to {path}")
+        
+        # Compute and save sentiment statistics for this cluster
+        cluster_stats = {
+            'cluster_id': c,
+            'total_keywords': len(cluster_words),
+            'word_sentiment_distribution': {},
+            'overall_word_sentiment': {
+                'positive': 0,
+                'negative': 0,
+                'neutral': 0
+            }
+        }
+        
+        for word, data in word_sentiment_data.items():
+            cluster_stats['word_sentiment_distribution'][word] = {
+                'dominant_sentiment': data['dominant'],
+                'confidence': data['confidence'],
+                'counts': data['counts'],
+                'proportions': data['proportions']
+            }
+            cluster_stats['overall_word_sentiment'][data['dominant']] += 1
+        
+        # Print summary
+        print(f"  Word sentiment distribution: {cluster_stats['overall_word_sentiment']}")
+        
+        # Create a bar chart for word sentiment distribution in this cluster
+        fig, ax = plt.subplots(figsize=(8, 6))
+        sentiments = ['positive', 'negative', 'neutral']
+        counts = [cluster_stats['overall_word_sentiment'][s] for s in sentiments]
+        colors = ['#4daf4a', '#e41a1c', '#377eb8']
+        
+        bars = ax.bar(sentiments, counts, color=colors)
+        ax.set_title(f'Cluster {c}: Word Sentiment Distribution\n(Based on Tweet Labels)', 
+                    fontsize=12, fontweight='bold')
+        ax.set_ylabel('Number of Keywords')
+        ax.set_xlabel('Sentiment')
+        
+        # Add value labels on bars
+        for bar, count in zip(bars, counts):
+            if count > 0:
+                ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.5,
+                       str(count), ha='center', va='bottom')
+        
+        plt.tight_layout()
+        stats_path = os.path.join(sentiment_wc_dir, f'cluster{c}_sentiment_distribution.png')
+        plt.savefig(stats_path, dpi=150, bbox_inches='tight')
+        plt.close()
+        
+        all_cluster_stats[c] = cluster_stats
+    
+    # Create combined grid of sentiment-colored word clouds
     cols = 2
     rows = (n_topics + cols - 1) // cols
-    fig, axes = plt.subplots(rows, cols, figsize=(14, 4 * rows))
-    axes = axes.flatten() if n_topics > 1 else [axes]
- 
+    fig, axes = plt.subplots(rows, cols, figsize=(16, 6 * rows))
+    if n_topics == 1:
+        axes = [axes]
+    else:
+        axes = axes.flatten()
+    
+    # Re-process for combined visualization (reuse cached data from first pass)
     for c in range(n_topics):
-        keywords     = llr_results[f'cluster_{c}']
+        keywords = llr_results[f'cluster_{c}']
         word_weights = {w: s for w, s in keywords if s > 0}
- 
+        
         if word_weights:
+            # Reuse cached word_sentiment_data stored in all_cluster_stats
+            cached_wsd = {
+                word: {
+                    'dominant': stats['dominant_sentiment'],
+                    'confidence': stats['confidence']
+                }
+                for word, stats in all_cluster_stats.get(c, {})
+                    .get('word_sentiment_distribution', {}).items()
+            } if c in all_cluster_stats else {}
+
+            def color_func(word, *args, wsd=cached_wsd, **kwargs):
+                return sentiment_color_func_tweet_based(word, wsd)
+            
             wc = WordCloud(
-                width=600,
-                height=300,
+                width=800,
+                height=400,
                 background_color='white',
-                color_func=lambda *args, **kwargs: colors[c % len(colors)],
-                max_words=50,
+                color_func=color_func,
+                max_words=100,
                 prefer_horizontal=0.9,
-                random_state=42
+                random_state=42,
+                collocations=False
             )
             wc.generate_from_frequencies(word_weights)
+            
             axes[c].imshow(wc, interpolation='bilinear')
- 
+            
+            # Add sentiment distribution info as text
+            if c in all_cluster_stats:
+                stats = all_cluster_stats[c]['overall_word_sentiment']
+                info_text = f"Positive: {stats['positive']} | Negative: {stats['negative']} | Neutral: {stats['neutral']}"
+                axes[c].text(0.5, -0.05, info_text, transform=axes[c].transAxes,
+                           ha='center', fontsize=8, fontweight='bold')
+        
         axes[c].set_title(f'Cluster {c}', fontsize=13, fontweight='bold')
         axes[c].axis('off')
- 
+        
+        # Add sentiment legend
+        from matplotlib.patches import Patch
+        legend_elements = [
+            Patch(facecolor='#4daf4a', label='Positive words'),
+            Patch(facecolor='#e41a1c', label='Negative words'),
+            Patch(facecolor='#377eb8', label='Neutral words'),
+            Patch(facecolor='#888888', label='Mixed/Uncertain')
+        ]
+        axes[c].legend(handles=legend_elements, loc='lower right', fontsize=8)
+    
+    # Hide empty subplots
     for c in range(n_topics, len(axes)):
         axes[c].axis('off')
- 
-    plt.suptitle(f'Topic Word Clouds ({output_subdir})', fontsize=15, fontweight='bold')
+    
+    plt.suptitle(f'Topic Word Clouds with Sentiment Coloring\n(Based on Tweet-Level Sentiment Labels)', 
+                 fontsize=15, fontweight='bold')
     plt.tight_layout()
-    combined_path = os.path.join(output_dir, f'{output_subdir}wordclouds_combined.png')
+    combined_path = os.path.join(sentiment_wc_dir, 'all_clusters_sentiment_wordclouds.png')
     plt.savefig(combined_path, dpi=150, bbox_inches='tight')
     plt.close()
-    print(f"Combined word cloud grid saved to {combined_path}")
- 
- 
-generate_wordclouds(llr_results, args.output_dir, output_subdir, args.n_topics, colors)
+    print(f"\nCombined sentiment-colored word cloud grid saved to {combined_path}")
+    
+    # Save all statistics as JSON
+    stats_json_path = os.path.join(sentiment_wc_dir, 'word_sentiment_statistics.json')
+    # Convert to serializable format
+    serializable_stats = {}
+    for cluster_id, stats in all_cluster_stats.items():
+        serializable_stats[f'cluster_{cluster_id}'] = {
+            'cluster_id': stats['cluster_id'],
+            'total_keywords': stats['total_keywords'],
+            'overall_word_sentiment': stats['overall_word_sentiment'],
+            'word_sentiment_distribution': {}
+        }
+        for word, word_stats in stats['word_sentiment_distribution'].items():
+            serializable_stats[f'cluster_{cluster_id}']['word_sentiment_distribution'][word] = {
+                'dominant_sentiment': word_stats['dominant_sentiment'],
+                'confidence': word_stats['confidence'],
+                'counts': word_stats['counts'],
+                'proportions': word_stats['proportions']
+            }
+    
+    with open(stats_json_path, 'w', encoding='utf-8') as f:
+        json.dump(serializable_stats, f, indent=2, ensure_ascii=False)
+    print(f"Word sentiment statistics saved to {stats_json_path}")
+    
+    return all_cluster_stats
+
+# Generate sentiment-colored word clouds using tweet-level sentiment labels
+word_sentiment_stats = generate_sentiment_wordclouds_tweet_based(
+    llr_results, 
+    texts_cleaned, 
+    df,  # This should have 'sentiment_label' column
+    cluster_labels, 
+    args.output_dir, 
+    output_subdir, 
+    args.n_topics
+)
  
 # ── Save outputs ──────────────────────────────────────────────────────────────
 clusters_csv = os.path.join(args.output_dir, f'{output_subdir}tweets_with_clusters.csv')
