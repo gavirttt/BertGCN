@@ -357,6 +357,7 @@ for c in range(args.n_topics):
     print([w for w, _ in keywords[:15]])
  
 # ── Word clouds ───────────────────────────────────────────────────────────────
+WC_MAX_WORDS = 50
 # ── Sentiment-colored word clouds using existing tweet labels ──────────────────
 def compute_word_sentiment_distribution(words, texts_cleaned, df, cluster_labels, cluster_id):
     """
@@ -454,7 +455,7 @@ def generate_sentiment_wordclouds_tweet_based(llr_results, texts_cleaned, df,
         
         # Get keywords for this cluster
         keywords = llr_results[f'cluster_{c}']
-        word_weights = {w: s for w, s in keywords if s > 0}
+        word_weights = {w: s for w, s in keywords[:WC_MAX_WORDS] if s > 0}
         
         if not word_weights:
             print(f"  Cluster {c}: no positive LLR scores, skipping.")
@@ -478,7 +479,7 @@ def generate_sentiment_wordclouds_tweet_based(llr_results, texts_cleaned, df,
             height=600,
             background_color='white',
             color_func=color_func,
-            max_words=100,
+            max_words=50,
             prefer_horizontal=0.9,
             random_state=42,
             collocations=False
@@ -551,7 +552,7 @@ def generate_sentiment_wordclouds_tweet_based(llr_results, texts_cleaned, df,
     # Re-process for combined visualization (reuse cached data from first pass)
     for c in range(n_topics):
         keywords = llr_results[f'cluster_{c}']
-        word_weights = {w: s for w, s in keywords if s > 0}
+        word_weights = {w: s for w, s in keywords[:WC_MAX_WORDS] if s > 0}
         
         if word_weights:
             # Reuse cached word_sentiment_data stored in all_cluster_stats
