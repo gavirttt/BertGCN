@@ -16,7 +16,7 @@
 set -e
 
 # ── Configurable parameters ──────────────────────────────────────────────────
-CSV="data/tweets_predictions.csv"
+CSV="data/tweets_labeled_full.csv"
 N_TOPICS=5
 DEVICE="cuda"
 BERT_INIT="dost-asti/RoBERTa-tl-sentiment-analysis"
@@ -70,7 +70,7 @@ echo "✓ CSV found"
 section "RUN 1 — Whole Dataset (all months, all sentiments)"
 
 step "Running topic modeling on full dataset"
-$PYTHON topic_modeling.py \
+$PYTHON topic_modeling/topic_modeling.py \
     --csv "$CSV" \
     --bert_init "$BERT_INIT" \
     --n_topics $N_TOPICS \
@@ -87,7 +87,7 @@ section "RUN 2 — Per Month"
 for MONTH in "${MONTHS[@]}"; do
     step "Month: $MONTH"
 
-    $PYTHON topic_modeling.py \
+    $PYTHON topic_modeling/topic_modeling.py \
         --csv "$CSV" \
         --bert_init "$BERT_INIT" \
         --n_topics $N_TOPICS \
@@ -97,27 +97,3 @@ for MONTH in "${MONTHS[@]}"; do
 
     echo "✓ Month $MONTH complete"
 done
-
-# =============================================================================
-# DONE
-# =============================================================================
-section "Pipeline Complete"
-
-echo "  Outputs:"
-echo ""
-echo "  Full dataset:"
-echo "    $OUTPUT_DIR/umap_all_all_months.png"
-echo "    $OUTPUT_DIR/wordclouds_combined_all_all_months.png"
-echo "    $OUTPUT_DIR/llr_keywords_all_all_months.json"
-echo "    $OUTPUT_DIR/tweets_with_clusters_all_all_months.csv"
-echo "    $OUTPUT_DIR/monthly_sentiment_trend.png"
-echo "    $OUTPUT_DIR/monthly_sentiment_counts.csv"
-echo ""
-echo "  Per month:"
-for MONTH in "${MONTHS[@]}"; do
-    echo "    $OUTPUT_DIR/umap_all_${MONTH}.png"
-    echo "    $OUTPUT_DIR/wordclouds_combined_all_${MONTH}.png"
-    echo "    $OUTPUT_DIR/llr_keywords_all_${MONTH}.json"
-    echo "    $OUTPUT_DIR/tweets_with_clusters_all_${MONTH}.csv"
-done
-echo ""
