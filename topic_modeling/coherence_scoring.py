@@ -19,7 +19,9 @@ from datetime import datetime
 #       --window_size 10
 #
 # Run sensitivity analysis (sweeps top_n from 5 to 20):
-#   python coherence_scoring.py --clusters results/all-sentiment/all-months/tweets_with_clusters.csv --keywords results/all-sentiment/all-months/llr_keywords.json --sensitivity
+#   python coherence_scoring.py --clusters finetuned-model/3clusters/all-sentiment/all-months/tweets_with_clusters.csv --keywords finetuned-model/3clusters/all-sentiment/all-months/llr_keywords.json --sensitivity --output_dir finetuned-model/3clusters/all-sentiment/all-months/coherence_scoring
+#   python coherence_scoring.py --clusters finetuned-model/4clusters/all-sentiment/all-months/tweets_with_clusters.csv --keywords finetuned-model/4clusters/all-sentiment/all-months/llr_keywords.json --sensitivity --output_dir finetuned-model/4clusters/all-sentiment/all-months/coherence_scoring
+#   python coherence_scoring.py --clusters finetuned-model/5clusters/all-sentiment/all-months/tweets_with_clusters.csv --keywords finetuned-model/5clusters/all-sentiment/all-months/llr_keywords.json --sensitivity --output_dir finetuned-model/5clusters/all-sentiment/all-months/coherence_scoring
 # ----------------- ----- -----------------
 
 parser = argparse.ArgumentParser()
@@ -98,7 +100,8 @@ tagalog_stopwords = [
     'anong', 'nitong', 'gayunmang', 'inyong',
     'iyong', 'kanyang', 'kaniyang', 'kanilang',
     'kaninong', 'mismong', 'naritong', 'nanditong',
-    'ritong', 'nyong', 'saan', 'saang'
+    'ritong', 'nyong', 'saan', 'saang', 'upang',
+    'tapos', 'mula'
 ]
 english_stopwords = list(CountVectorizer(stop_words='english').get_stop_words())
 all_stopwords = list(set(english_stopwords + tagalog_stopwords))
@@ -128,7 +131,7 @@ def build_cooccurrence(doc_term_matrix):
     doc_freq  = np.asarray(binary.sum(axis=0)).flatten()
     return binary, doc_freq
 
-def compute_umass(top_words, binary_matrix, doc_freq, word2id, epsilon=1.0):
+def compute_umass(top_words, binary_matrix, doc_freq, word2id):
     """
     UMass coherence:
       C_UMass = (2 / N(N-1)) * sum_{j>i} log( (D(wi,wj) + eps) / D(wj) )
@@ -148,10 +151,10 @@ def compute_umass(top_words, binary_matrix, doc_freq, word2id, epsilon=1.0):
             col_i   = np.asarray(binary_matrix[:, idx_i].todense()).flatten()
             col_j   = np.asarray(binary_matrix[:, idx_j].todense()).flatten()
             d_wi_wj = float(np.logical_and(col_i, col_j).sum())
-            d_wj    = float(doc_freq[idx_j])
+            d_wj = float(doc_freq[idx_j])
             if d_wj == 0:
                 continue
-            score += np.log((d_wi_wj + epsilon) / d_wj)
+            score += np.log((d_wi_wj + 1e-12) / d_wj)
             pairs += 1
     if pairs == 0:
         return float('nan')
@@ -178,7 +181,7 @@ def build_uci_cooccurrence(texts, word2id, window_size):
                     pair_count[pair] = pair_count.get(pair, 0) + 1
     return word_count, pair_count, total_windows
 
-def compute_uci(top_words, word_count, pair_count, total_windows, word2id, epsilon=1.0):
+def compute_uci(top_words, word_count, pair_count, total_windows, word2id):
     """
     UCI coherence:
       C_UCI = (2 / N(N-1)) * sum_{j>i} log( (P(wi,wj) + eps) / (P(wi) * P(wj)) )
@@ -204,7 +207,7 @@ def compute_uci(top_words, word_count, pair_count, total_windows, word2id, epsil
             p_wi    = cnt_i  / total_windows
             p_wj    = cnt_j  / total_windows
             p_wi_wj = cnt_ij / total_windows
-            score  += np.log((p_wi_wj + epsilon / total_windows) / (p_wi * p_wj))
+            score += np.log((p_wi_wj + 1e-12) / (p_wi * p_wj))
             pairs  += 1
     if pairs == 0:
         return float('nan')
