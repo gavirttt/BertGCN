@@ -14,8 +14,11 @@ checkpoint/*
 ,/*
 annotator_stats/*
 statistical_testing/*
-topic_modeling/results*
-*.ipynb
+topic_modeling/*-model/
+topic_modeling/data/
+coherence_*/
+dataset_eval/
+*.zip
 bert_gcn
 bert_gcn_ind
 bert_sgc
