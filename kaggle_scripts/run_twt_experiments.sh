@@ -1,4 +1,3 @@
-%%writefile run_twitter_experiments.sh
 #!/bin/bash
 # =============================================================================
 # run_twitter_ablation.sh
